@@ -1,0 +1,14 @@
+# Target labels
+ kleidiai-populate
+# Source files and their labels
+C:/Users/ASUS/Desktop/PocketForgeAI/native/build-arm64/_deps/kleidiai-subbuild/CMakeFiles/kleidiai-populate
+C:/Users/ASUS/Desktop/PocketForgeAI/native/build-arm64/_deps/kleidiai-subbuild/CMakeFiles/kleidiai-populate.rule
+C:/Users/ASUS/Desktop/PocketForgeAI/native/build-arm64/_deps/kleidiai-subbuild/CMakeFiles/kleidiai-populate-complete.rule
+C:/Users/ASUS/Desktop/PocketForgeAI/native/build-arm64/_deps/kleidiai-subbuild/kleidiai-populate-prefix/src/kleidiai-populate-stamp/kleidiai-populate-build.rule
+C:/Users/ASUS/Desktop/PocketForgeAI/native/build-arm64/_deps/kleidiai-subbuild/kleidiai-populate-prefix/src/kleidiai-populate-stamp/kleidiai-populate-configure.rule
+C:/Users/ASUS/Desktop/PocketForgeAI/native/build-arm64/_deps/kleidiai-subbuild/kleidiai-populate-prefix/src/kleidiai-populate-stamp/kleidiai-populate-download.rule
+C:/Users/ASUS/Desktop/PocketForgeAI/native/build-arm64/_deps/kleidiai-subbuild/kleidiai-populate-prefix/src/kleidiai-populate-stamp/kleidiai-populate-install.rule
+C:/Users/ASUS/Desktop/PocketForgeAI/native/build-arm64/_deps/kleidiai-subbuild/kleidiai-populate-prefix/src/kleidiai-populate-stamp/kleidiai-populate-mkdir.rule
+C:/Users/ASUS/Desktop/PocketForgeAI/native/build-arm64/_deps/kleidiai-subbuild/kleidiai-populate-prefix/src/kleidiai-populate-stamp/kleidiai-populate-patch.rule
+C:/Users/ASUS/Desktop/PocketForgeAI/native/build-arm64/_deps/kleidiai-subbuild/kleidiai-populate-prefix/src/kleidiai-populate-stamp/kleidiai-populate-test.rule
+C:/Users/ASUS/Desktop/PocketForgeAI/native/build-arm64/_deps/kleidiai-subbuild/kleidiai-populate-prefix/src/kleidiai-populate-stamp/kleidiai-populate-update.rule

@@ -1,0 +1,14 @@
+# Target labels
+ spirv-headers-populate
+# Source files and their labels
+C:/Users/ASUS/Desktop/PocketForgeAI/native/build-arm64/_deps/spirv-headers-subbuild/CMakeFiles/spirv-headers-populate
+C:/Users/ASUS/Desktop/PocketForgeAI/native/build-arm64/_deps/spirv-headers-subbuild/CMakeFiles/spirv-headers-populate.rule
+C:/Users/ASUS/Desktop/PocketForgeAI/native/build-arm64/_deps/spirv-headers-subbuild/CMakeFiles/spirv-headers-populate-complete.rule
+C:/Users/ASUS/Desktop/PocketForgeAI/native/build-arm64/_deps/spirv-headers-subbuild/spirv-headers-populate-prefix/src/spirv-headers-populate-stamp/spirv-headers-populate-build.rule
+C:/Users/ASUS/Desktop/PocketForgeAI/native/build-arm64/_deps/spirv-headers-subbuild/spirv-headers-populate-prefix/src/spirv-headers-populate-stamp/spirv-headers-populate-configure.rule
+C:/Users/ASUS/Desktop/PocketForgeAI/native/build-arm64/_deps/spirv-headers-subbuild/spirv-headers-populate-prefix/src/spirv-headers-populate-stamp/spirv-headers-populate-download.rule
+C:/Users/ASUS/Desktop/PocketForgeAI/native/build-arm64/_deps/spirv-headers-subbuild/spirv-headers-populate-prefix/src/spirv-headers-populate-stamp/spirv-headers-populate-install.rule
+C:/Users/ASUS/Desktop/PocketForgeAI/native/build-arm64/_deps/spirv-headers-subbuild/spirv-headers-populate-prefix/src/spirv-headers-populate-stamp/spirv-headers-populate-mkdir.rule
+C:/Users/ASUS/Desktop/PocketForgeAI/native/build-arm64/_deps/spirv-headers-subbuild/spirv-headers-populate-prefix/src/spirv-headers-populate-stamp/spirv-headers-populate-patch.rule
+C:/Users/ASUS/Desktop/PocketForgeAI/native/build-arm64/_deps/spirv-headers-subbuild/spirv-headers-populate-prefix/src/spirv-headers-populate-stamp/spirv-headers-populate-test.rule
+C:/Users/ASUS/Desktop/PocketForgeAI/native/build-arm64/_deps/spirv-headers-subbuild/spirv-headers-populate-prefix/src/spirv-headers-populate-stamp/spirv-headers-populate-update.rule

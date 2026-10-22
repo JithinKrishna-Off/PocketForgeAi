@@ -1,0 +1,1 @@
+C:/Users/ASUS/Desktop/PocketForgeAI/native/build-arm64/build-llama/ggml/src/ggml-vulkan/wkv6.comp.cpp: C:/Users/ASUS/Desktop/PocketForgeAI/third_party/llama.cpp/ggml/src/ggml-vulkan/vulkan-shaders/wkv6.comp

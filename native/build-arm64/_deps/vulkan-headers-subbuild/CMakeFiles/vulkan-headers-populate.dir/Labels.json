@@ -1,0 +1,46 @@
+{
+	"sources" : 
+	[
+		{
+			"file" : "C:/Users/ASUS/Desktop/PocketForgeAI/native/build-arm64/_deps/vulkan-headers-subbuild/CMakeFiles/vulkan-headers-populate"
+		},
+		{
+			"file" : "C:/Users/ASUS/Desktop/PocketForgeAI/native/build-arm64/_deps/vulkan-headers-subbuild/CMakeFiles/vulkan-headers-populate.rule"
+		},
+		{
+			"file" : "C:/Users/ASUS/Desktop/PocketForgeAI/native/build-arm64/_deps/vulkan-headers-subbuild/CMakeFiles/vulkan-headers-populate-complete.rule"
+		},
+		{
+			"file" : "C:/Users/ASUS/Desktop/PocketForgeAI/native/build-arm64/_deps/vulkan-headers-subbuild/vulkan-headers-populate-prefix/src/vulkan-headers-populate-stamp/vulkan-headers-populate-build.rule"
+		},
+		{
+			"file" : "C:/Users/ASUS/Desktop/PocketForgeAI/native/build-arm64/_deps/vulkan-headers-subbuild/vulkan-headers-populate-prefix/src/vulkan-headers-populate-stamp/vulkan-headers-populate-configure.rule"
+		},
+		{
+			"file" : "C:/Users/ASUS/Desktop/PocketForgeAI/native/build-arm64/_deps/vulkan-headers-subbuild/vulkan-headers-populate-prefix/src/vulkan-headers-populate-stamp/vulkan-headers-populate-download.rule"
+		},
+		{
+			"file" : "C:/Users/ASUS/Desktop/PocketForgeAI/native/build-arm64/_deps/vulkan-headers-subbuild/vulkan-headers-populate-prefix/src/vulkan-headers-populate-stamp/vulkan-headers-populate-install.rule"
+		},
+		{
+			"file" : "C:/Users/ASUS/Desktop/PocketForgeAI/native/build-arm64/_deps/vulkan-headers-subbuild/vulkan-headers-populate-prefix/src/vulkan-headers-populate-stamp/vulkan-headers-populate-mkdir.rule"
+		},
+		{
+			"file" : "C:/Users/ASUS/Desktop/PocketForgeAI/native/build-arm64/_deps/vulkan-headers-subbuild/vulkan-headers-populate-prefix/src/vulkan-headers-populate-stamp/vulkan-headers-populate-patch.rule"
+		},
+		{
+			"file" : "C:/Users/ASUS/Desktop/PocketForgeAI/native/build-arm64/_deps/vulkan-headers-subbuild/vulkan-headers-populate-prefix/src/vulkan-headers-populate-stamp/vulkan-headers-populate-test.rule"
+		},
+		{
+			"file" : "C:/Users/ASUS/Desktop/PocketForgeAI/native/build-arm64/_deps/vulkan-headers-subbuild/vulkan-headers-populate-prefix/src/vulkan-headers-populate-stamp/vulkan-headers-populate-update.rule"
+		}
+	],
+	"target" : 
+	{
+		"labels" : 
+		[
+			"vulkan-headers-populate"
+		],
+		"name" : "vulkan-headers-populate"
+	}
+}

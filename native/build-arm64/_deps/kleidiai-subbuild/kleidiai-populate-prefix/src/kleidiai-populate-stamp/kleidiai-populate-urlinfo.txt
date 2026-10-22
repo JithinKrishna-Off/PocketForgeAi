@@ -1,0 +1,12 @@
+# This is a generated file and its contents are an internal implementation detail.
+# The download step will be re-executed if anything in this file changes.
+# No other meaning or use of this file is supported.
+
+method=url
+command=C:/Users/ASUS/AppData/Local/Android/Sdk/cmake/3.31.6/bin/cmake.exe;-DCMAKE_MESSAGE_LOG_LEVEL=VERBOSE;-P;C:/Users/ASUS/Desktop/PocketForgeAI/native/build-arm64/_deps/kleidiai-subbuild/kleidiai-populate-prefix/src/kleidiai-populate-stamp/download-kleidiai-populate.cmake;COMMAND;C:/Users/ASUS/AppData/Local/Android/Sdk/cmake/3.31.6/bin/cmake.exe;-DCMAKE_MESSAGE_LOG_LEVEL=VERBOSE;-P;C:/Users/ASUS/Desktop/PocketForgeAI/native/build-arm64/_deps/kleidiai-subbuild/kleidiai-populate-prefix/src/kleidiai-populate-stamp/verify-kleidiai-populate.cmake;COMMAND;C:/Users/ASUS/AppData/Local/Android/Sdk/cmake/3.31.6/bin/cmake.exe;-DCMAKE_MESSAGE_LOG_LEVEL=VERBOSE;-P;C:/Users/ASUS/Desktop/PocketForgeAI/native/build-arm64/_deps/kleidiai-subbuild/kleidiai-populate-prefix/src/kleidiai-populate-stamp/extract-kleidiai-populate.cmake
+source_dir=C:/Users/ASUS/Desktop/PocketForgeAI/native/build-arm64/_deps/kleidiai-src
+work_dir=C:/Users/ASUS/Desktop/PocketForgeAI/native/build-arm64/_deps
+url(s)=https://github.com/ARM-software/kleidiai/releases/download/v1.31.0/kleidiai-v1.31.0-src.tar.gz
+hash=MD5=930495f3aeb16b25dc18a2bde45924f4
+      no_extract=
+

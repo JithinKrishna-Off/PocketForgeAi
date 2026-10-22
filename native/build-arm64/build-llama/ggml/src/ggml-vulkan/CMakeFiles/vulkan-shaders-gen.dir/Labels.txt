@@ -1,0 +1,13 @@
+# Target labels
+ vulkan-shaders-gen
+# Source files and their labels
+C:/Users/ASUS/Desktop/PocketForgeAI/native/build-arm64/build-llama/ggml/src/ggml-vulkan/CMakeFiles/vulkan-shaders-gen
+C:/Users/ASUS/Desktop/PocketForgeAI/native/build-arm64/build-llama/ggml/src/ggml-vulkan/CMakeFiles/vulkan-shaders-gen.rule
+C:/Users/ASUS/Desktop/PocketForgeAI/native/build-arm64/build-llama/ggml/src/ggml-vulkan/CMakeFiles/vulkan-shaders-gen-complete.rule
+C:/Users/ASUS/Desktop/PocketForgeAI/native/build-arm64/build-llama/ggml/src/ggml-vulkan/vulkan-shaders-gen-prefix/src/vulkan-shaders-gen-stamp/vulkan-shaders-gen-build.rule
+C:/Users/ASUS/Desktop/PocketForgeAI/native/build-arm64/build-llama/ggml/src/ggml-vulkan/vulkan-shaders-gen-prefix/src/vulkan-shaders-gen-stamp/vulkan-shaders-gen-configure.rule
+C:/Users/ASUS/Desktop/PocketForgeAI/native/build-arm64/build-llama/ggml/src/ggml-vulkan/vulkan-shaders-gen-prefix/src/vulkan-shaders-gen-stamp/vulkan-shaders-gen-download.rule
+C:/Users/ASUS/Desktop/PocketForgeAI/native/build-arm64/build-llama/ggml/src/ggml-vulkan/vulkan-shaders-gen-prefix/src/vulkan-shaders-gen-stamp/vulkan-shaders-gen-install.rule
+C:/Users/ASUS/Desktop/PocketForgeAI/native/build-arm64/build-llama/ggml/src/ggml-vulkan/vulkan-shaders-gen-prefix/src/vulkan-shaders-gen-stamp/vulkan-shaders-gen-mkdir.rule
+C:/Users/ASUS/Desktop/PocketForgeAI/native/build-arm64/build-llama/ggml/src/ggml-vulkan/vulkan-shaders-gen-prefix/src/vulkan-shaders-gen-stamp/vulkan-shaders-gen-patch.rule
+C:/Users/ASUS/Desktop/PocketForgeAI/native/build-arm64/build-llama/ggml/src/ggml-vulkan/vulkan-shaders-gen-prefix/src/vulkan-shaders-gen-stamp/vulkan-shaders-gen-update.rule

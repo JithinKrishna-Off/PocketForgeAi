@@ -1,0 +1,14 @@
+# Target labels
+ vulkan-headers-populate
+# Source files and their labels
+C:/Users/ASUS/Desktop/PocketForgeAI/native/build-arm64/_deps/vulkan-headers-subbuild/CMakeFiles/vulkan-headers-populate
+C:/Users/ASUS/Desktop/PocketForgeAI/native/build-arm64/_deps/vulkan-headers-subbuild/CMakeFiles/vulkan-headers-populate.rule
+C:/Users/ASUS/Desktop/PocketForgeAI/native/build-arm64/_deps/vulkan-headers-subbuild/CMakeFiles/vulkan-headers-populate-complete.rule
+C:/Users/ASUS/Desktop/PocketForgeAI/native/build-arm64/_deps/vulkan-headers-subbuild/vulkan-headers-populate-prefix/src/vulkan-headers-populate-stamp/vulkan-headers-populate-build.rule
+C:/Users/ASUS/Desktop/PocketForgeAI/native/build-arm64/_deps/vulkan-headers-subbuild/vulkan-headers-populate-prefix/src/vulkan-headers-populate-stamp/vulkan-headers-populate-configure.rule
+C:/Users/ASUS/Desktop/PocketForgeAI/native/build-arm64/_deps/vulkan-headers-subbuild/vulkan-headers-populate-prefix/src/vulkan-headers-populate-stamp/vulkan-headers-populate-download.rule
+C:/Users/ASUS/Desktop/PocketForgeAI/native/build-arm64/_deps/vulkan-headers-subbuild/vulkan-headers-populate-prefix/src/vulkan-headers-populate-stamp/vulkan-headers-populate-install.rule
+C:/Users/ASUS/Desktop/PocketForgeAI/native/build-arm64/_deps/vulkan-headers-subbuild/vulkan-headers-populate-prefix/src/vulkan-headers-populate-stamp/vulkan-headers-populate-mkdir.rule
+C:/Users/ASUS/Desktop/PocketForgeAI/native/build-arm64/_deps/vulkan-headers-subbuild/vulkan-headers-populate-prefix/src/vulkan-headers-populate-stamp/vulkan-headers-populate-patch.rule
+C:/Users/ASUS/Desktop/PocketForgeAI/native/build-arm64/_deps/vulkan-headers-subbuild/vulkan-headers-populate-prefix/src/vulkan-headers-populate-stamp/vulkan-headers-populate-test.rule
+C:/Users/ASUS/Desktop/PocketForgeAI/native/build-arm64/_deps/vulkan-headers-subbuild/vulkan-headers-populate-prefix/src/vulkan-headers-populate-stamp/vulkan-headers-populate-update.rule

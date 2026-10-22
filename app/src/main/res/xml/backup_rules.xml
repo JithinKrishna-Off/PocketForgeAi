@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<full-backup-content>
+    <!-- Exclude multi-GB model weights and partial downloads from backups -->
+    <exclude domain="external" path="models/" />
+    <exclude domain="external" path="downloads/" />
+</full-backup-content>

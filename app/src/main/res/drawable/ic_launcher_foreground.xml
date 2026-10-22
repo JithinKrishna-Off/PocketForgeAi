@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- hammer + chat glyph -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M30,62
+        L30,70
+        L50,70
+        L50,78
+        L58,78
+        L58,70
+        L62,70
+        C74,70 80,62 80,50
+        C80,38 74,30 62,30
+        L40,30
+        C36,30 34,32 34,36
+        L34,62
+        Z
+        M40,38
+        L60,38
+        C69,38 72,42 72,50
+        C72,58 69,62 60,62
+        L42,62
+        L40,60
+        Z" />
+</vector>

@@ -1,0 +1,1 @@
+C:/Users/ASUS/Desktop/PocketForgeAI/native/build-arm64/build-llama/ggml/src/ggml-vulkan/flash_attn_sparse_compact.comp.cpp: C:/Users/ASUS/Desktop/PocketForgeAI/third_party/llama.cpp/ggml/src/ggml-vulkan/vulkan-shaders/flash_attn_sparse_compact.comp

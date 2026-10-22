@@ -1,0 +1,3 @@
+C:/Users/ASUS/Desktop/PocketForgeAI/native/build-arm64/_deps/kleidiai-subbuild/CMakeFiles/kleidiai-populate.dir
+C:/Users/ASUS/Desktop/PocketForgeAI/native/build-arm64/_deps/kleidiai-subbuild/CMakeFiles/edit_cache.dir
+C:/Users/ASUS/Desktop/PocketForgeAI/native/build-arm64/_deps/kleidiai-subbuild/CMakeFiles/rebuild_cache.dir

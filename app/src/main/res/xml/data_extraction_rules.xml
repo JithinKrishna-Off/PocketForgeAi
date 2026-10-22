@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<data-extraction-rules>
+    <!-- Chat data, encryption key material and persona blobs are never backed up.
+         Models are large, public binaries and are excluded only for size. -->
+    <cloud-backup>
+        <exclude domain="external" path="models/" />
+        <exclude domain="external" path="downloads/" />
+        <exclude domain="internal" path="conversations/" />
+        <exclude domain="internal" path="no_backup/" />
+        <exclude domain="file" path="conversations/" />
+        <exclude domain="database" path="." />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="external" path="models/" />
+        <exclude domain="external" path="downloads/" />
+        <exclude domain="internal" path="conversations/" />
+        <exclude domain="internal" path="no_backup/" />
+        <exclude domain="file" path="conversations/" />
+        <exclude domain="database" path="." />
+    </device-transfer>
+    <d2d-recovery>
+        <exclude domain="external" path="models/" />
+        <exclude domain="internal" path="conversations/" />
+        <exclude domain="internal" path="no_backup/" />
+    </d2d-recovery>
+</data-extraction-rules>

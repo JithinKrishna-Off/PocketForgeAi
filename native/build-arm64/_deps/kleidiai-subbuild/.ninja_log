@@ -1,0 +1,21 @@
+# ninja log v6
+7	329	8142911727233498	kleidiai-populate-prefix/src/kleidiai-populate-stamp/kleidiai-populate-mkdir	901f57c833623a64
+7178	7639	8142911800009303	kleidiai-populate-prefix/src/kleidiai-populate-stamp/kleidiai-populate-patch	e85782aa365b8ad3
+7	329	8142911727233498	C:/Users/ASUS/Desktop/PocketForgeAI/native/build-arm64/_deps/kleidiai-subbuild/kleidiai-populate-prefix/src/kleidiai-populate-stamp/kleidiai-populate-mkdir	901f57c833623a64
+7640	8003	8142911803858037	C:/Users/ASUS/Desktop/PocketForgeAI/native/build-arm64/_deps/kleidiai-subbuild/kleidiai-populate-prefix/src/kleidiai-populate-stamp/kleidiai-populate-configure	18bef0a9960dbcc7
+7178	7639	8142911800009303	C:/Users/ASUS/Desktop/PocketForgeAI/native/build-arm64/_deps/kleidiai-subbuild/kleidiai-populate-prefix/src/kleidiai-populate-stamp/kleidiai-populate-patch	e85782aa365b8ad3
+331	6864	8142911792435096	kleidiai-populate-prefix/src/kleidiai-populate-stamp/kleidiai-populate-download	45bd7c1f2c84bf32
+331	6864	8142911792435096	C:/Users/ASUS/Desktop/PocketForgeAI/native/build-arm64/_deps/kleidiai-subbuild/kleidiai-populate-prefix/src/kleidiai-populate-stamp/kleidiai-populate-download	45bd7c1f2c84bf32
+6875	7177	8142911795744393	C:/Users/ASUS/Desktop/PocketForgeAI/native/build-arm64/_deps/kleidiai-subbuild/kleidiai-populate-prefix/src/kleidiai-populate-stamp/kleidiai-populate-update	94e0560225c6a96d
+6875	7177	8142911795744393	kleidiai-populate-prefix/src/kleidiai-populate-stamp/kleidiai-populate-update	94e0560225c6a96d
+7640	8003	8142911803858037	kleidiai-populate-prefix/src/kleidiai-populate-stamp/kleidiai-populate-configure	18bef0a9960dbcc7
+8003	8320	8142911807134654	kleidiai-populate-prefix/src/kleidiai-populate-stamp/kleidiai-populate-build	69cac25be91933ea
+8712	9022	8142911814144637	kleidiai-populate-prefix/src/kleidiai-populate-stamp/kleidiai-populate-done	209c6dd3ed197c08
+8003	8320	8142911807134654	C:/Users/ASUS/Desktop/PocketForgeAI/native/build-arm64/_deps/kleidiai-subbuild/kleidiai-populate-prefix/src/kleidiai-populate-stamp/kleidiai-populate-build	69cac25be91933ea
+8320	8510	8142911809059322	kleidiai-populate-prefix/src/kleidiai-populate-stamp/kleidiai-populate-install	ca815f1d7f4feefa
+8320	8510	8142911809059322	C:/Users/ASUS/Desktop/PocketForgeAI/native/build-arm64/_deps/kleidiai-subbuild/kleidiai-populate-prefix/src/kleidiai-populate-stamp/kleidiai-populate-install	ca815f1d7f4feefa
+8511	8711	8142911811074012	kleidiai-populate-prefix/src/kleidiai-populate-stamp/kleidiai-populate-test	c0e6ec6eb5ecc269
+8511	8711	8142911811074012	C:/Users/ASUS/Desktop/PocketForgeAI/native/build-arm64/_deps/kleidiai-subbuild/kleidiai-populate-prefix/src/kleidiai-populate-stamp/kleidiai-populate-test	c0e6ec6eb5ecc269
+8712	9022	8142911814144637	CMakeFiles/kleidiai-populate-complete	209c6dd3ed197c08
+8712	9022	8142911814144637	C:/Users/ASUS/Desktop/PocketForgeAI/native/build-arm64/_deps/kleidiai-subbuild/CMakeFiles/kleidiai-populate-complete	209c6dd3ed197c08
+8712	9022	8142911814144637	C:/Users/ASUS/Desktop/PocketForgeAI/native/build-arm64/_deps/kleidiai-subbuild/kleidiai-populate-prefix/src/kleidiai-populate-stamp/kleidiai-populate-done	209c6dd3ed197c08

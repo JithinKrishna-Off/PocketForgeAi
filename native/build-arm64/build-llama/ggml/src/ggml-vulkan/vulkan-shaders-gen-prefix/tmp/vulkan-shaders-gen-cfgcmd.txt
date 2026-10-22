@@ -1,0 +1,1 @@
+cmd='C:/Users/ASUS/AppData/Local/Android/Sdk/cmake/3.31.6/bin/cmake.exe;-DCMAKE_INSTALL_PREFIX=C:/Users/ASUS/Desktop/PocketForgeAI/native/build-arm64/$<CONFIG>;-DCMAKE_INSTALL_BINDIR=.;-DCMAKE_BUILD_TYPE=$<CONFIG>;-DCMAKE_TOOLCHAIN_FILE=C:/Users/ASUS/Desktop/PocketForgeAI/native/build-arm64/host-toolchain.cmake;-GNinja;-S;<SOURCE_DIR><SOURCE_SUBDIR>;-B;<BINARY_DIR>'

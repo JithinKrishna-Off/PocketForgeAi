@@ -1,0 +1,3 @@
+C:/Users/ASUS/Desktop/PocketForgeAI/native/build-arm64/_deps/spirv-headers-subbuild/CMakeFiles/spirv-headers-populate.dir
+C:/Users/ASUS/Desktop/PocketForgeAI/native/build-arm64/_deps/spirv-headers-subbuild/CMakeFiles/edit_cache.dir
+C:/Users/ASUS/Desktop/PocketForgeAI/native/build-arm64/_deps/spirv-headers-subbuild/CMakeFiles/rebuild_cache.dir

@@ -1,0 +1,46 @@
+{
+	"sources" : 
+	[
+		{
+			"file" : "C:/Users/ASUS/Desktop/PocketForgeAI/native/build-arm64/_deps/spirv-headers-subbuild/CMakeFiles/spirv-headers-populate"
+		},
+		{
+			"file" : "C:/Users/ASUS/Desktop/PocketForgeAI/native/build-arm64/_deps/spirv-headers-subbuild/CMakeFiles/spirv-headers-populate.rule"
+		},
+		{
+			"file" : "C:/Users/ASUS/Desktop/PocketForgeAI/native/build-arm64/_deps/spirv-headers-subbuild/CMakeFiles/spirv-headers-populate-complete.rule"
+		},
+		{
+			"file" : "C:/Users/ASUS/Desktop/PocketForgeAI/native/build-arm64/_deps/spirv-headers-subbuild/spirv-headers-populate-prefix/src/spirv-headers-populate-stamp/spirv-headers-populate-build.rule"
+		},
+		{
+			"file" : "C:/Users/ASUS/Desktop/PocketForgeAI/native/build-arm64/_deps/spirv-headers-subbuild/spirv-headers-populate-prefix/src/spirv-headers-populate-stamp/spirv-headers-populate-configure.rule"
+		},
+		{
+			"file" : "C:/Users/ASUS/Desktop/PocketForgeAI/native/build-arm64/_deps/spirv-headers-subbuild/spirv-headers-populate-prefix/src/spirv-headers-populate-stamp/spirv-headers-populate-download.rule"
+		},
+		{
+			"file" : "C:/Users/ASUS/Desktop/PocketForgeAI/native/build-arm64/_deps/spirv-headers-subbuild/spirv-headers-populate-prefix/src/spirv-headers-populate-stamp/spirv-headers-populate-install.rule"
+		},
+		{
+			"file" : "C:/Users/ASUS/Desktop/PocketForgeAI/native/build-arm64/_deps/spirv-headers-subbuild/spirv-headers-populate-prefix/src/spirv-headers-populate-stamp/spirv-headers-populate-mkdir.rule"
+		},
+		{
+			"file" : "C:/Users/ASUS/Desktop/PocketForgeAI/native/build-arm64/_deps/spirv-headers-subbuild/spirv-headers-populate-prefix/src/spirv-headers-populate-stamp/spirv-headers-populate-patch.rule"
+		},
+		{
+			"file" : "C:/Users/ASUS/Desktop/PocketForgeAI/native/build-arm64/_deps/spirv-headers-subbuild/spirv-headers-populate-prefix/src/spirv-headers-populate-stamp/spirv-headers-populate-test.rule"
+		},
+		{
+			"file" : "C:/Users/ASUS/Desktop/PocketForgeAI/native/build-arm64/_deps/spirv-headers-subbuild/spirv-headers-populate-prefix/src/spirv-headers-populate-stamp/spirv-headers-populate-update.rule"
+		}
+	],
+	"target" : 
+	{
+		"labels" : 
+		[
+			"spirv-headers-populate"
+		],
+		"name" : "spirv-headers-populate"
+	}
+}
