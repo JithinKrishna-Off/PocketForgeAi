@@ -90,6 +90,14 @@ object LlamaBridge {
     @JvmStatic
     external fun getRecentLogs(): Array<String>
 
+    /** JSON: device facts (HWCAP, per-core clocks, chosen CPU variant, mem) + the plan the engine used last. */
+    @JvmStatic
+    external fun pfPlansJson(): String
+
+    /** Applies a plan JSON (kv types, flash-attn, batch shape, threads). Returns the active plan JSON. */
+    @JvmStatic
+    external fun pfSetPlan(plan: String): String
+
     @JvmStatic
     external fun shutdown()
 }

@@ -170,8 +170,22 @@ class ModelLoadService(private val app: PocketForgeApp) {
             app.engine.loadModel(config)
             SessionStats.onLoaded(System.currentTimeMillis() - start)
             app.settingsStore.setLastModelId(modelId)
-            val where = rec.gpuDeviceName?.let { " (GPU: $it)" } ?: " (CPU)"
-            Result.Loaded("Optimized load${where}: ctx ${config.nCtx}, threads ${config.nThreads} in ${(System.currentTimeMillis() - start) / 1000.0}s")
+            val planDesc = try {
+                val p = LlamaBridge.pfPlansJson()
+                val chosen = Regex("\"chosenVariant\"\\s*:\\s*\"([^\"]+)\"").find(p)?.groupValues?.get(1)
+                val threads = Regex("\"nThreads\"\\s*:\\s*(\\d+)").find(p)?.groupValues?.get(1)
+                val kv = Regex("\"kvTypeK\"\\s*:\\s*\"([^\"]+)\"").find(p)?.groupValues?.get(1)
+                listOfNotNull(
+                    chosen?.let { "kernel $it" },
+                    threads?.let { "threads $threads" },
+                    kv?.let { "kv $kv" },
+                ).joinToString(", ")
+            } catch (_: Throwable) {
+                ""
+            }
+            val where = rec.gpuDeviceName?.takeIf { rec.gpuLayers > 0 }?.let { " (GPU: $it)" } ?: " (CPU)"
+            val planNote = if (planDesc.isNotBlank()) " [plan: $planDesc]" else ""
+            Result.Loaded("Optimized load$where: ctx ${config.nCtx}, threads ${config.nThreads}$planNote in ${(System.currentTimeMillis() - start) / 1000.0}s")
         } catch (t: Throwable) {
             Result.Failure("Optimized load failed: ${t.message}")
         }
