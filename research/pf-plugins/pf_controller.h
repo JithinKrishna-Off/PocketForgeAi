@@ -17,4 +17,14 @@ int big_core_count(const PfDeviceFacts & facts);
 PfPlan plan_for_class(const PfDeviceFacts & facts, PfDeviceClass cls);
 PfPlan decide_plan(const PfDeviceFacts & facts);
 
+// Highest of the 7 shipped CPU variants whose compiled-in feature set is fully
+// covered by the reported HWCAP-derived facts (armv8.0_1 always supported).
+std::string highest_supported_variant(const PfDeviceFacts & facts);
+
+// Planner downgrade: if the plan pins a cpuVariant the device does not support
+// (e.g. hwcap lacks dotprod), replace it with highest_supported_variant; a plan
+// with cpuVariant "" passes through (engine default order already handles it).
+// Other fields are untouched.
+PfPlan demote_variant_if_unsupported(const PfPlan & plan, const PfDeviceFacts & facts);
+
 } // namespace pf

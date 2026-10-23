@@ -11,6 +11,19 @@
 
 namespace pf {
 
+const char * const k_cpu_variants[7] = {
+    "armv8.0_1", "armv8.2_1", "armv8.2_2", "armv8.6_1",
+    "armv9.0_1", "armv9.2_1", "armv9.2_2",
+};
+const char * const k_kv_types[3] = {"f16", "q8_0", "q4_0"};
+const char * const k_load_modes[4] = {"auto", "mmap", "direct_io", "none"};
+
+bool valid_cpu_variant(const std::string & v) {
+    if (v.empty()) { return true; } // "" = engine default order
+    for (const char * c : k_cpu_variants) { if (v == c) { return true; } }
+    return false;
+}
+
 namespace {
 
 // Parses only what the contract needs: nested objects of string/int keys,
@@ -169,6 +182,12 @@ bool parse_plan(const std::string & json, PfPlan * out, std::string * err) {
         *dest = atoll(it->second.c_str());
         return true;
     };
+    auto get_float = [&](const char * key, float * dest) {
+        auto it = m.find(key);
+        if (it == m.end()) { return false; }
+        *dest = (float) atof(it->second.c_str());
+        return true;
+    };
     auto get_str = [&](const char * key, std::string * dest) {
         auto it = m.find(key);
         if (it == m.end()) { return false; }
@@ -176,16 +195,33 @@ bool parse_plan(const std::string & json, PfPlan * out, std::string * err) {
         return true;
     };
     get_int("pfPlanVersion", &p.planVersion);
+    get_str("planId", &p.planId);
     get_str("cpu.cpuVariant", &p.cpuVariant);
     get_int("cpu.nThreads", &p.nThreads);
     get_int("cpu.nThreadsBatch", &p.nThreadsBatch);
+    get_int("ctx.nCtx", &p.nCtx);
     get_str("kv.typeK", &p.kvTypeK);
     get_str("kv.typeV", &p.kvTypeV);
-    get_str("kv.flashAttn", &p.flashAttn);
+    // flashAttn accepted as 0|1 (v1 contract); v0's "auto"/"on"/"off" strings
+    // are tolerated and migrated, unknown strings rejected.
+    if (!get_int("kv.flashAttn", &p.flashAttn)) {
+        std::string fas;
+        if (get_str("kv.flashAttn", &fas)) {
+            if (fas == "on") { p.flashAttn = 1; }
+            else if (fas == "auto" || fas == "off") { p.flashAttn = 0; }
+            else { if (err) { *err = "kv.flashAttn not 0|1"; } return false; }
+        }
+    }
     get_int("batch.nBatch", &p.nBatch);
     get_int("batch.nUbatch", &p.nUbatch);
     get_int("split.nGpuLayers", &p.nGpuLayers);
     get_str("split.loadMode", &p.loadMode);
+    {
+        auto it = m.find("split.mlock");
+        if (it != m.end()) { p.mlock = atoi(it->second.c_str()) != 0; }
+    }
+    get_float("rate.decodeRate", &p.decodeRate);
+    get_float("rate.prefillRate", &p.prefillRate);
     get_ll("heap.maxHeapBytes", &p.maxHeapBytes);
 
     auto valid_enum = [](const std::string & v, const char * const * opts, size_t n) {
@@ -193,36 +229,70 @@ bool parse_plan(const std::string & json, PfPlan * out, std::string * err) {
         return false;
     };
     static const char * k_kv[] = {"f16", "q8_0", "q4_0"};
-    static const char * k_fa[] = {"auto", "on", "off"};
-    static const char * k_lm[] = {"auto", "mmap", "mlock", "mmap_mlock", "direct_io", "none"};
+    static const char * k_lm[] = {"auto", "mmap", "direct_io", "none"};
     if (!valid_enum(p.kvTypeK, k_kv, 3)) { if (err) { *err = "kv.typeK not in {f16,q8_0,q4_0}"; } return false; }
     if (!valid_enum(p.kvTypeV, k_kv, 3)) { if (err) { *err = "kv.typeV not in {f16,q8_0,q4_0}"; } return false; }
-    if (!valid_enum(p.flashAttn, k_fa, 3)) { if (err) { *err = "kv.flashAttn not in {auto,on,off}"; } return false; }
-    if (!valid_enum(p.loadMode, k_lm, 6)) { if (err) { *err = "split.loadMode not in {auto,mmap,mlock,mmap_mlock,direct_io,none}"; } return false; }
+    if (p.flashAttn != 0 && p.flashAttn != 1) { if (err) { *err = "kv.flashAttn not 0|1"; } return false; }
+    if (!valid_enum(p.loadMode, k_lm, 4)) { if (err) { *err = "split.loadMode not in {auto,mmap,direct_io,none}"; } return false; }
+    if (!valid_cpu_variant(p.cpuVariant)) { if (err) { *err = "cpu.cpuVariant not one of the 7 shipped variants or \"\""; } return false; }
     if (p.nThreads != -1 && (p.nThreads < 1 || p.nThreads > 64)) { if (err) { *err = "cpu.nThreads out of range"; } return false; }
     if (p.nThreadsBatch != -1 && (p.nThreadsBatch < 1 || p.nThreadsBatch > 64)) { if (err) { *err = "cpu.nThreadsBatch out of range"; } return false; }
+    if (p.nCtx != -1 && (p.nCtx < 128 || p.nCtx > 262144)) { if (err) { *err = "ctx.nCtx out of range"; } return false; }
     if (p.nBatch != -1 && (p.nBatch < 16 || p.nBatch > 4096)) { if (err) { *err = "batch.nBatch out of range"; } return false; }
     if (p.nUbatch != -1 && p.nUbatch < 16) { if (err) { *err = "batch.nUbatch out of range"; } return false; }
     if (p.nUbatch != -1 && p.nBatch != -1 && p.nUbatch > p.nBatch) { if (err) { *err = "batch.nUbatch must be <= batch.nBatch"; } return false; }
     if (p.nGpuLayers != -2 && p.nGpuLayers < -1) { if (err) { *err = "split.nGpuLayers must be >= -1 or -2 (defer)"; } return false; }
+    if (p.decodeRate < 0.0f || p.prefillRate < 0.0f) { if (err) { *err = "rate values must be >= 0"; } return false; }
     if (out) { *out = p; }
+    if (err) { err->clear(); }
+    return validate_plan_rules(p, err) ? true : false;
+}
+
+bool validate_plan_rules(const PfPlan & p, std::string * err) {
+    if (p.flashAttn == 1 && (p.kvTypeK == "q4_0" || p.kvTypeV == "q4_0")) {
+        if (err) { *err = "invalid pairing: flashAttn=1 with q4_0 KV cache"; }
+        return false;
+    }
+    if (p.flashAttn == 1 && (p.kvTypeK == "q8_0" || p.kvTypeV == "q8_0")) {
+        // llama.cpp FA supports q8_0 KV only for K (V is f16 in FA practice);
+        // keep permissive but flag q8_0 V as risky rather than reject.
+        if (p.kvTypeV == "q8_0" && err) { *err = "warning: flashAttn=1 with q8_0 V cache"; }
+    }
     return true;
 }
+
+namespace {
+
+// Rates: keep one decimal, 0.0 when unmeasured.
+std::string rate_out(float r) {
+    if (r <= 0.0f) { return "0.0"; }
+    std::ostringstream o;
+    o.precision(1);
+    o << std::fixed << r;
+    return o.str();
+}
+
+} // namespace
 
 std::string serialize_plan(const PfPlan & plan) {
     std::ostringstream o;
     o << "{"
       << "\"pfPlanVersion\":" << plan.planVersion << ","
+      << "\"planId\":\"" << plan.planId << "\","
       << "\"cpu\":{\"cpuVariant\":\"" << plan.cpuVariant << "\","
       << "\"nThreads\":" << plan.nThreads << ","
       << "\"nThreadsBatch\":" << plan.nThreadsBatch << "},"
+      << "\"ctx\":{\"nCtx\":" << plan.nCtx << "},"
       << "\"kv\":{\"typeK\":\"" << plan.kvTypeK << "\","
       << "\"typeV\":\"" << plan.kvTypeV << "\","
-      << "\"flashAttn\":\"" << plan.flashAttn << "\"},"
+      << "\"flashAttn\":" << (plan.flashAttn ? 1 : 0) << "},"
       << "\"batch\":{\"nBatch\":" << plan.nBatch << ","
       << "\"nUbatch\":" << plan.nUbatch << "},"
       << "\"split\":{\"nGpuLayers\":" << plan.nGpuLayers << ","
-      << "\"loadMode\":\"" << plan.loadMode << "\"},"
+      << "\"loadMode\":\"" << plan.loadMode << "\","
+      << "\"mlock\":" << (plan.mlock ? 1 : 0) << "},"
+      << "\"rate\":{\"decodeRate\":" << rate_out(plan.decodeRate) << ","
+      << "\"prefillRate\":" << rate_out(plan.prefillRate) << "},"
       << "\"heap\":{\"maxHeapBytes\":" << plan.maxHeapBytes << "}"
       << "}";
     return o.str();

@@ -40,9 +40,14 @@ object DeviceOptimizer {
     ): Recommendation {
         val rationale = mutableListOf<String>()
         val gpu = devices.firstOrNull { it.type == "GPU" }
-        val gpuLayers = if (gpu != null) 99 else 0
-        if (gpu != null) {
-            rationale.add("GPU ${gpu.description}: offloading all repeating layers to ${gpu.deviceName}")
+        // Measured on Dimensity 9300+/Mali-G720-Immortalis (V2503i, 2026-10-23): full
+        // Vulkan offload is slower than tuned CPU for both prefill and decode
+        // (1.5B: pp 13.5 vs 157 tok/s), and llama.cpp-on-Mali slowness is published
+        // (arXiv:2410.03613, MediaTek Dimensity 9300). Default is therefore CPU-first;
+        // a GPU offload still applies when the caller requests it explicitly.
+        val gpuLayers = if (gpu != null) 0 else 0
+        if (gpu != null && gpuLayers == 0) {
+            rationale.add("GPU ${gpu.description} present but CPU execution selected (measured faster per token on this GPU class); enable/offload override available")
         } else {
             rationale.add("No engine-visible GPU: running on CPU (quantized, feature-selected variant)")
         }

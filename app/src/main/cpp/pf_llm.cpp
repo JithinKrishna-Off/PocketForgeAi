@@ -294,8 +294,11 @@ Java_com_pocketforge_ai_inference_LlamaBridge_loadModel(
     ctx_params.n_batch = batch_size > 0 ? batch_size : DEFAULT_BATCH_SIZE;
     ctx_params.n_ubatch = batch_size > 0 ? batch_size : DEFAULT_BATCH_SIZE;
     const int hw_threads = (int) sysconf(_SC_NPROCESSORS_ONLN);
+    // Defaults tuned on Dimensity 9300+ (8 all-big cores): 6 threads saturates
+    // memory bandwidth for decode without the all-core collapse seen at 8.
+    // On 6-core phones this stays 4 as before; 4-core phones use 2.
     const int threads = n_threads > 0 && n_threads <= hw_threads
-        ? n_threads : std::max(1, std::min(4, hw_threads - 2));
+        ? n_threads : std::max(1, std::min(6, hw_threads - 2));
     ctx_params.n_threads = threads;
     ctx_params.n_threads_batch = threads;
     auto * context = llama_init_from_model(model, ctx_params);

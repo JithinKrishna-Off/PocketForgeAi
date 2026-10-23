@@ -12,7 +12,7 @@ $ErrorActionPreference = "Stop"
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 
 Write-Host "== PF controller build stub =="
-$src = @("pf_plan.cpp", "pf_controller.cpp", "pf_controller_test.cpp")
+$src = @("pf_plan.cpp", "pf_plan_apply.cpp", "pf_controller.cpp", "pf_controller_test.cpp")
 foreach ($f in $src) {
     if (-not (Test-Path (Join-Path $here $f))) { Write-Host "missing source: $f" -ForegroundColor Red; exit 2 }
 }
@@ -27,7 +27,7 @@ $gpp = Get-Command g++ -ErrorAction SilentlyContinue
 
 if ($vcvars) {
     $vcvarsPath = $vcvars.FullName
-    $compile = "cl /nologo /EHsc /std:c++17 /O2 /W3 /Fe:pf_controller_test.exe pf_plan.cpp pf_controller.cpp pf_controller_test.cpp"
+    $compile = "cl /nologo /EHsc /std:c++17 /O2 /W3 /Fe:pf_controller_test.exe pf_plan.cpp pf_plan_apply.cpp pf_controller.cpp pf_controller_test.cpp"
     $bat = @("@echo off",
              "call `"$vcvarsPath`" >NUL 2>&1",
              "pushd `"$here`"",
@@ -52,13 +52,13 @@ if ($vcvars) {
 $tool = $null; $args = $null
 if ($clOnPath) {
     $tool = $clOnPath.Source
-    $args = @("/nologo", "/EHsc", "/std:c++17", "/O2", "/W3", "/Fe:pf_controller_test.exe", "pf_plan.cpp", "pf_controller.cpp", "pf_controller_test.cpp")
+    $args = @("/nologo", "/EHsc", "/std:c++17", "/O2", "/W3", "/Fe:pf_controller_test.exe", "pf_plan.cpp", "pf_plan_apply.cpp", "pf_controller.cpp", "pf_controller_test.cpp")
 } elseif ($clangpp) {
     $tool = $clangpp.Source
-    $args = @("-std=c++17", "-O2", "-Wall", "pf_plan.cpp", "pf_controller.cpp", "pf_controller_test.cpp", "-o", "pf_controller_test.exe")
+    $args = @("-std=c++17", "-O2", "-Wall", "pf_plan.cpp", "pf_plan_apply.cpp", "pf_controller.cpp", "pf_controller_test.cpp", "-o", "pf_controller_test.exe")
 } elseif ($gpp) {
     $tool = $gpp.Source
-    $args = @("-std=c++17", "-O2", "-Wall", "pf_plan.cpp", "pf_controller.cpp", "pf_controller_test.cpp", "-o", "pf_controller_test.exe")
+    $args = @("-std=c++17", "-O2", "-Wall", "pf_plan.cpp", "pf_plan_apply.cpp", "pf_controller.cpp", "pf_controller_test.cpp", "-o", "pf_controller_test.exe")
 } else {
     Write-Host @"
 No C++ toolchain found. Any of these works, then re-run .\build_controller.ps1:
