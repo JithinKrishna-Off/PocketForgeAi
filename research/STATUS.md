@@ -1,0 +1,4 @@
+# STATUS (appended on every significant event)
+- [10:50] t0. Recon done. Device attached (`device`), lock taken, spare libs + models + prior results confirmed. branch research/breakthrough created, research/ scaffolding in place.
+- [10:55] Prior phase0 data pulled to research/data/phase0_prior/. Two big validity findings: (a) owner's cpu baseline used ONLY armv8.0_1 kernel lib (weakest kernels), so "owner's app at 1 tok/s for 7B" plausibly maps to a SET of fixable config/kernel issues; (b) tg128 variance was 6-30 t/s across repeats at same config -> noise protocol needed (H4) before any 1.5x claim can be trusted.
+- [10:56] Agent fleet launched: HARNESS (B1 scripts + sweep), B2 (engine audit), L (literature), HW (hardware archaeology), TH (roofline calc). Report back to coordinator; all write own files only.
