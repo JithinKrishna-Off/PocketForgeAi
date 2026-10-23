@@ -9,3 +9,4 @@ captures/
 .DS_Store
 *.apk
 !artifacts/*.apk
+research/data/
