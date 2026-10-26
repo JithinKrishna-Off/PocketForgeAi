@@ -1,0 +1,713 @@
+diff --git a/app/src/main/cpp/CMakeLists.txt b/app/src/main/cpp/CMakeLists.txt
+index 7e115fd..1a2bf32 100644
+--- a/app/src/main/cpp/CMakeLists.txt
++++ b/app/src/main/cpp/CMakeLists.txt
+@@ -79,13 +79,14 @@ if(POCKETFORGE_ENABLE_VULKAN AND TARGET ggml-vulkan)
+     # ggml-vulkan picks up <spirv/unified1/spirv.hpp> via __has_include;
+     # upstream expects it from a Vulkan SDK install, we provide the fetched copy.
+     target_include_directories(ggml-vulkan PRIVATE ${spirv-headers_SOURCE_DIR}/include)
+ endif()
+ 
+ add_library(${CMAKE_PROJECT_NAME} SHARED
+-        pf_llm.cpp)
++        pf_llm.cpp
++        pf_plan.cpp)
+ 
+ target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
+         GGML_SYSTEM_ARCH=${GGML_SYSTEM_ARCH}
+         GGML_CPU_KLEIDIAI=$<BOOL:${GGML_CPU_KLEIDIAI}>
+         GGML_OPENMP=$<BOOL:${GGML_OPENMP}>
+ )
+diff --git a/app/src/main/cpp/pf_llm.cpp b/app/src/main/cpp/pf_llm.cpp
+index 7126f68..2a7b665 100644
+--- a/app/src/main/cpp/pf_llm.cpp
++++ b/app/src/main/cpp/pf_llm.cpp
+@@ -3,19 +3,29 @@
+ //
+ // Ownership and threading:
+ // - A single model/context/sampler set is owned globally. All calls come from
+ //   Kotlin's single-threaded engine dispatcher except setStopFlag (relaxed atomic).
+ // - Kotlin owns the accumulated assistant turn text; finishTurn records it in
+ //   the chat-template history. Native code never logs prompt/response content.
++//
++// PF plan surface (pf_llm_patch_v0.diff, see research/pf-plugins):
++// - pf::PfPlan is the JSON plan contract shared with the runtime controller
++//   prototype (research/pf-plugins/pf_controller.cpp).
++// - pfPlansJson()/pfSetPlan() expose device facts + the current plan and let
++//   Kotlin apply a plan before loadModel; structural knobs (kv types, flash
++//   attn, batch, load mode, gpu layers, threads) are applied at context build;
++//   thread counts are additionally applied live via llama_set_n_threads.
+ #include <android/log.h>
+ #include <jni.h>
+ #include <unistd.h>
++#include <sys/auxv.h>
+ 
+ #include <algorithm>
+ #include <atomic>
+ #include <cmath>
++#include <cstdio>
+ #include <cstring>
+ #include <deque>
+ #include <functional>
+ #include <dirent.h>
+ #include <sstream>
+ #include <string>
+@@ -23,12 +33,13 @@
+ 
+ #include "chat.h"
+ #include "common.h"
+ #include "sampling.h"
+ #include "llama.h"
+ #include "ggml-backend.h"
++#include "pf_plan.h"
+ 
+ #define LOG_TAG "PFLlamaJNI"
+ #define LOGi(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
+ #define LOGe(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
+ #define LOGw(...) __android_log_print(ANDROID_LOG_WARN, LOG_TAG, __VA_ARGS__)
+ 
+@@ -149,12 +160,14 @@ static std::string json_escape(const std::string & s) {
+     }
+     return o.str();
+ }
+ 
+ static std::vector<std::string> pf_backend_diag; // one line per load attempt, shown if load fails
+ 
++static std::string g_pf_chosen_cpu_variant;  // last winning libggml-cpu loader name
++
+ /*
+  * Loads backend libraries by build-time-known names.
+  *
+  * With extractNativeLibs=false packaging (AGP default for this build), the
+  * app's nativeLibraryDir is EMPTY: backend .so entries live uncompressed/mapped
+  * inside the APK and only the dynamic linker can reach them. System.loadLibrary
+@@ -218,12 +231,13 @@ static void pf_load_backends(const char * lib_dir) {
+ 
+     // Vulkan first so GPU devices exist before any model load.
+     pf_try_backend(lib_dir_s, "libggml-vulkan.so", "vulkan backend");
+ 
+     for (const char * name : PF_CPU_VARIANTS) {
+         if (pf_try_backend(lib_dir_s, name, ("cpu variant " + std::string(name)).c_str())) {
++            g_pf_chosen_cpu_variant = name;
+             break;
+         }
+     }
+ 
+     std::ostringstream regs;
+     for (size_t i = 0; i < ggml_backend_reg_count(); ++i) {
+@@ -231,12 +245,134 @@ static void pf_load_backends(const char * lib_dir) {
+         regs << ggml_backend_reg_name(ggml_backend_reg_get(i));
+     }
+     LOGi("Registered backends: %s", regs.str().c_str());
+     pf_backend_diag.push_back("registered: " + regs.str());
+ }
+ 
++// ---------------------------------------------------------------------------
++// PF plan surface: device facts + plan state (see research/pf-plugins).
++// ---------------------------------------------------------------------------
++
++static pf::PfPlan g_pf_plan;                 // Kotlin-driven plan; defaults = engine defaults
++
++static unsigned long long pf_read_number_file(const std::string & path) {
++    FILE * f = fopen(path.c_str(), "r");
++    if (!f) { return 0; }
++    unsigned long long v = 0;
++    if (fscanf(f, "%llu", &v) != 1) { v = 0; }
++    fclose(f);
++    return v;
++}
++
++// AT_HWCAP / AT_HWCAP2 bit masks for arm64 (linux/bionic; ggml's
++// cpu-feats.cpp reads the same via ggml_feats_get_arch64_runtime).
++namespace {
++constexpr unsigned long long PF_HWCAP_ASIMDHP = 1ull << 10;      // fp16 vector
++constexpr unsigned long long PF_HWCAP_ASIMDDP = 1ull << 20;      // dotprod
++constexpr unsigned long long PF_HWCAP_SVE     = 1ull << 22;
++constexpr unsigned long long PF_HWCAP2_SVE2   = 1ull << 1;
++constexpr unsigned long long PF_HWCAP2_I8MM   = 1ull << 13;
++constexpr unsigned long long PF_HWCAP2_SME    = 1ull << 23;
++constexpr unsigned long long PF_HWCAP2_SME2   = 1ull << 37;
++}
++
++static pf::PfDeviceFacts pf_collect_device_facts() {
++    pf::PfDeviceFacts facts;
++    facts.backendName = g_pf_chosen_cpu_variant;
++    if (g_pf_chosen_cpu_variant.size() > 30) {
++        // strip libggml-cpu-android_<name>.so -> <name>
++        facts.backendName = g_pf_chosen_cpu_variant.substr(20, g_pf_chosen_cpu_variant.size() - 23);
++    }
++    facts.nCoresOnline = (int) sysconf(_SC_NPROCESSORS_ONLN);
++    for (int c = 0; c < facts.nCoresOnline; ++c) {
++        char buf[160];
++        pf::PfCpuCore core;
++        core.id = c;
++        snprintf(buf, sizeof(buf), "/sys/devices/system/cpu/cpu%d/cpufreq/scaling_max_freq", c);
++        core.maxKhz = (long long) pf_read_number_file(buf);
++        snprintf(buf, sizeof(buf), "/sys/devices/system/cpu/cpu%d/cpufreq/scaling_min_freq", c);
++        core.minKhz = (long long) pf_read_number_file(buf);
++        facts.cores.push_back(core);
++    }
++    facts.hwcap  = getauxval(AT_HWCAP);
++    facts.hwcap2 = getauxval(AT_HWCAP2);
++    facts.hasDotprod = (facts.hwcap & PF_HWCAP_ASIMDDP) != 0;
++    facts.hasFp16    = (facts.hwcap & PF_HWCAP_ASIMDHP) != 0;
++    facts.hasSve     = (facts.hwcap & PF_HWCAP_SVE) != 0;
++    facts.hasSve2    = (facts.hwcap2 & PF_HWCAP2_SVE2) != 0;
++    facts.hasI8mm    = (facts.hwcap2 & PF_HWCAP2_I8MM) != 0;
++    facts.hasSme     = (facts.hwcap2 & PF_HWCAP2_SME) != 0;
++    facts.hasSme2    = (facts.hwcap2 & PF_HWCAP2_SME2) != 0;
++    facts.vulkanOk = ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_GPU) != nullptr
++        || ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_IGPU) != nullptr;
++    // MemAvailable (kB) from /proc/meminfo
++    {
++        FILE * f = fopen("/proc/meminfo", "r");
++        if (f) {
++            char line[512];
++            while (fgets(line, sizeof(line), f)) {
++                unsigned long long kb = 0;
++                if (sscanf(line, "MemAvailable: %llu kB", &kb) == 1) {
++                    facts.memAvailableBytes = kb * 1024ull;
++                    break;
++                }
++            }
++            fclose(f);
++        }
++    }
++    facts.factsValid = facts.nCoresOnline > 0 && facts.memAvailableBytes > 0;
++    return facts;
++}
++
++static enum llama_flash_attn_type pf_flash_attn_from_str(const std::string & s) {
++    return s == "on" ? LLAMA_FLASH_ATTN_TYPE_ENABLED
++         : s == "off" ? LLAMA_FLASH_ATTN_TYPE_DISABLED : LLAMA_FLASH_ATTN_TYPE_AUTO;
++}
++
++static enum ggml_type pf_kv_type_from_str(const std::string & s) {
++    return s == "q8_0" ? GGML_TYPE_Q8_0
++         : s == "q4_0" ? GGML_TYPE_Q4_0 : GGML_TYPE_F16;
++}
++
++// C ABI for the plan layer (JNI wrappers below are thin shells over these).
++static std::string pf_engine_current_plan_json_impl() {
++    return pf::plan_and_facts_json(g_pf_plan, pf_collect_device_facts());
++}
++
++// Returns "" on success, error text otherwise. Structural knobs (kv types,
++// flash attn, batch, load mode, gpu layers) take effect at the next context
++// build; thread counts also apply live via llama_set_n_threads.
++static std::string pf_engine_set_plan_impl(const char * json) {
++    if (json == nullptr || json[0] == '\0') { return "pf_engine_set_plan: empty plan JSON"; }
++    pf::PfPlan parsed;
++    std::string err;
++    if (!pf::parse_plan(json, &parsed, &err)) { return "pf_engine_set_plan: " + err; }
++    g_pf_plan = parsed;
++    if (g_context != nullptr && g_pf_plan.nThreads > 0) {
++        const int hw_threads = (int) sysconf(_SC_NPROCESSORS_ONLN);
++        const int t = std::min(g_pf_plan.nThreads, hw_threads);
++        const int tb = std::min(g_pf_plan.nThreadsBatch > 0 ? g_pf_plan.nThreadsBatch : g_pf_plan.nThreads, hw_threads);
++        llama_set_n_threads(g_context, t, tb);
++        LOGi("pfSetPlan: live thread counts -> n_threads=%d n_threads_batch=%d", t, tb);
++    }
++    return "";
++}
++
++static std::string g_pf_plan_json_ret;
++
++extern "C" const char * pf_engine_current_plan_json(void) {
++    g_pf_plan_json_ret = pf_engine_current_plan_json_impl();
++    return g_pf_plan_json_ret.c_str();
++}
++
++extern "C" const char * pf_engine_set_plan(const char * json) {
++    static std::string ret;
++    ret = pf_engine_set_plan_impl(json);
++    return ret.c_str();
++}
++
+ extern "C"
+ JNIEXPORT void JNICALL
+ Java_com_pocketforge_ai_inference_LlamaBridge_init(JNIEnv *env, jobject /*unused*/, jstring nativeLibDir) {
+     llama_log_set(jni_log_callback, nullptr);
+ 
+     const auto * path_to_backend = env->GetStringUTFChars(nativeLibDir, nullptr);
+@@ -263,13 +399,17 @@ Java_com_pocketforge_ai_inference_LlamaBridge_loadModel(
+     if (n_gpu_layers > 0 && ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_GPU) == nullptr
+         && ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_IGPU) == nullptr) {
+         return env->NewStringUTF("GPU offload requested but no GPU backend device is registered in this build");
+     }
+ 
+     llama_model_params model_params = llama_model_default_params();
+-    model_params.n_gpu_layers = n_gpu_layers;
++    model_params.n_gpu_layers = g_pf_plan.nGpuLayers != -2 ? g_pf_plan.nGpuLayers : n_gpu_layers;
++    if (g_pf_plan.loadMode != "auto" && g_pf_plan.loadMode != "mmap") {
++        const enum llama_load_mode lm = llama_load_mode_from_str(g_pf_plan.loadMode.c_str());
++        if (lm != LLAMA_LOAD_MODE_AUTO && lm != LLAMA_LOAD_MODE_MMAP) { model_params.load_mode = lm; }
++    }
+ 
+     const auto * model_path = env->GetStringUTFChars(jmodel_path, nullptr);
+     LOGi("Loading model (ctx=%d, threads=%d, gpu_layers=%d, batch=%d)",
+          (int) n_ctx, (int) n_threads, (int) n_gpu_layers, (int) batch_size);
+     auto * model = llama_model_load_from_file(model_path, model_params);
+     env->ReleaseStringUTFChars(jmodel_path, model_path);
+@@ -288,36 +428,52 @@ Java_com_pocketforge_ai_inference_LlamaBridge_loadModel(
+     }
+     g_model = model;
+     g_vocab = llama_model_get_vocab(model);
+ 
+     llama_context_params ctx_params = llama_context_default_params();
+     ctx_params.n_ctx = n_ctx;
+-    ctx_params.n_batch = batch_size > 0 ? batch_size : DEFAULT_BATCH_SIZE;
+-    ctx_params.n_ubatch = batch_size > 0 ? batch_size : DEFAULT_BATCH_SIZE;
++    const int arg_batch = batch_size > 0 ? batch_size : DEFAULT_BATCH_SIZE;
++    ctx_params.n_batch = g_pf_plan.nBatch > 0 ? g_pf_plan.nBatch : arg_batch;
++    ctx_params.n_ubatch = g_pf_plan.nUbatch > 0 ? g_pf_plan.nUbatch
++                        : g_pf_plan.nBatch > 0 ? g_pf_plan.nBatch : arg_batch;
+     const int hw_threads = (int) sysconf(_SC_NPROCESSORS_ONLN);
+-    const int threads = n_threads > 0 && n_threads <= hw_threads
++    const int arg_threads = n_threads > 0 && n_threads <= hw_threads
+         ? n_threads : std::max(1, std::min(4, hw_threads - 2));
+-    ctx_params.n_threads = threads;
+-    ctx_params.n_threads_batch = threads;
++    const int decode_threads = g_pf_plan.nThreads > 0 ? g_pf_plan.nThreads : arg_threads;
++    const int batch_threads = g_pf_plan.nThreadsBatch > 0 ? g_pf_plan.nThreadsBatch : decode_threads;
++    ctx_params.n_threads = decode_threads;
++    ctx_params.n_threads_batch = batch_threads;
++    ctx_params.flash_attn_type = pf_flash_attn_from_str(g_pf_plan.flashAttn);
++    ctx_params.type_k = pf_kv_type_from_str(g_pf_plan.kvTypeK);
++    ctx_params.type_v = pf_kv_type_from_str(g_pf_plan.kvTypeV);
++    if (!g_pf_plan.cpuVariant.empty()) {
++        LOGi("Plan requests cpuVariant %s (engine loads most-capable first; variant pinning needs loader support, ignoring override)", g_pf_plan.cpuVariant.c_str());
++    }
++    if (g_pf_plan.maxHeapBytes > 0) {
++        LOGi("Plan heap budget %lld bytes (advisory, not enforced by llama.cpp in v0)", (long long) g_pf_plan.maxHeapBytes);
++    }
+     auto * context = llama_init_from_model(model, ctx_params);
+     if (context == nullptr) {
+         llama_model_free(model);
+         g_model = nullptr;
+         g_vocab = nullptr;
+         return env->NewStringUTF("Failed to create inference context (likely out of memory for KV cache)");
+     }
+     g_context = context;
+     g_n_ctx = n_ctx;
+-    g_n_batch = batch_size > 0 ? batch_size : DEFAULT_BATCH_SIZE;
++    g_n_batch = (int) ctx_params.n_batch;
+ 
+     g_batch = common_batch(context);
+     g_chat_templates = common_chat_templates_init(model, "");
+     reset_chat_msgs();
+     reset_long_term_states(false);
+     g_cancel_flag.store(false);
+-    LOGi("Model ready: ctx=%d batch=%d threads=%d", (int) llama_n_ctx(context), g_n_batch, threads);
++    LOGi("Model ready: ctx=%d batch=%d ubatch=%d threads=%d batch_threads=%d kv=%s/%s fa=%s",
++         (int) llama_n_ctx(context), (int) ctx_params.n_batch, (int) ctx_params.n_ubatch,
++         (int) decode_threads, (int) batch_threads,
++         g_pf_plan.kvTypeK.c_str(), g_pf_plan.kvTypeV.c_str(), g_pf_plan.flashAttn.c_str());
+     return nullptr;
+ }
+ 
+ extern "C"
+ JNIEXPORT void JNICALL
+ Java_com_pocketforge_ai_inference_LlamaBridge_unloadModel(JNIEnv * /*env*/, jobject /*unused*/) {
+@@ -603,12 +759,37 @@ Java_com_pocketforge_ai_inference_LlamaBridge_listBackendsJson(JNIEnv *env, jobj
+         }
+     }
+     json << "]}";
+     return env->NewStringUTF(json.str().c_str());
+ }
+ 
++// PF plan surface JNI: Kotlin plan layer (com.pocketforge.ai.inference.PfPlans)
++// reads facts + current plan, decides a plan (mirrors pf_controller.cpp logic or
++// downloads/pins one), and applies it before loadModel. pfSetPlan returns null
++// on success or an error string (matching loadModel's convention).
++
++extern "C"
++JNIEXPORT jstring JNICALL
++Java_com_pocketforge_ai_inference_LlamaBridge_pfPlansJson(JNIEnv *env, jobject /*unused*/) {
++    try {
++        return env->NewStringUTF(pf_engine_current_plan_json_impl().c_str());
++    } catch (...) {
++        return env->NewStringUTF("{\"error\":\"pfPlansJson failed\"}");
++    }
++}
++
++extern "C"
++JNIEXPORT jstring JNICALL
++Java_com_pocketforge_ai_inference_LlamaBridge_pfSetPlan(JNIEnv *env, jobject /*unused*/, jstring jplan) {
++    if (!jplan) { return env->NewStringUTF("pfSetPlan: null plan JSON"); }
++    const auto * plan = env->GetStringUTFChars(jplan, nullptr);
++    const std::string err = pf_engine_set_plan_impl(plan);
++    env->ReleaseStringUTFChars(jplan, plan);
++    return err.empty() ? nullptr : env->NewStringUTF(err.c_str());
++}
++
+ // ---------------------------------------------------------------------------
+ // GPU probe: for each GPU backend device run small mul_mat graphs in
+ // f32 / f16 / q4_K x f32 configurations, compute the identical graph on the
+ // CPU backend, and compare results. Steps recorded per data type:
+ // ENUMERATED -> INITIALIZED -> COMPUTED -> RESULT_MATCHED.
+ // ---------------------------------------------------------------------------
+diff --git a/app/src/main/cpp/pf_plan.cpp b/app/src/main/cpp/pf_plan.cpp
+new file mode 100644
+index 0000000..ddd7e49
+--- /dev/null
++++ b/app/src/main/cpp/pf_plan.cpp
+@@ -0,0 +1,271 @@
++// pf_plan.cpp - JSON (de)serialisation for the PF plan v0 contract.
++// Self-contained minimal recursive-descent parser/writer: no external JSON
++// library is needed on any target (host MSVC/clang/gcc or NDK arm64).
++#include "pf_plan.h"
++
++#include <algorithm>
++#include <cstdlib>
++#include <map>
++#include <sstream>
++#include <cctype>
++
++namespace pf {
++
++namespace {
++
++// Parses only what the contract needs: nested objects of string/int keys,
++// string, number, bool, null values. Returns false with a human-readable error.
++class MiniJsonParser {
++public:
++    MiniJsonParser(const std::string & s) : s_(s), i_(0) {}
++
++    bool parse(std::map<std::string, std::string> * out, std::string * err) {
++        skip_ws();
++        if (!parse_object("", out)) {
++            if (err && err->empty()) { *err = "malformed JSON near offset " + std::to_string(i_); }
++            return false;
++        }
++        skip_ws();
++        if (i_ != s_.size()) {
++            if (err) { *err = "trailing data at offset " + std::to_string(i_); }
++            return false;
++        }
++        return true;
++    }
++
++private:
++    const std::string & s_;
++    size_t i_;
++
++    void skip_ws() {
++        while (i_ < s_.size() && (s_[i_] == ' ' || s_[i_] == '\t' || s_[i_] == '\r' || s_[i_] == '\n')) { ++i_; }
++    }
++    bool peek(char c) const { return i_ < s_.size() && s_[i_] == c; }
++    bool eat(char c) {
++        if (peek(c)) { ++i_; return true; }
++        return false;
++    }
++
++    bool parse_string(std::string * out) {
++        if (!eat('"')) { return false; }
++        out->clear();
++        while (i_ < s_.size() && s_[i_] != '"') {
++            if (s_[i_] == '\\' && i_ + 1 < s_.size()) {
++                ++i_;
++                const char c = s_[i_++];
++                switch (c) {
++                    case 'n': *out += '\n'; break;
++                    case 't': *out += '\t'; break;
++                    case 'r': *out += '\r'; break;
++                    case '"': *out += '"'; break;
++                    case '\\': *out += '\\'; break;
++                    default: *out += c; break; // \uXXXX: plan fields never need it
++                }
++            } else {
++                *out += s_[i_++];
++            }
++        }
++        return eat('"');
++    }
++
++    // Arrays are never part of the plan contract's scalar fields; when one
++    // appears (e.g. facts.cores inside the plan+facts wrapper) skip the
++    // balanced group wholesale and store the raw text.
++    bool skip_array(std::string * out) {
++        const size_t begin = i_;
++        if (!eat('[')) { return false; }
++        int depth = 1;
++        bool instr = false, esc = false;
++        while (i_ < s_.size() && depth > 0) {
++            const char c = s_[i_];
++            if (instr) {
++                if (esc) { esc = false; }
++                else if (c == '\\') { esc = true; }
++                else if (c == '"') { instr = false; }
++            } else if (c == '"') { instr = true; }
++            else if (c == '[') { ++depth; }
++            else if (c == ']') { --depth; }
++            ++i_;
++        }
++        if (depth != 0) { return false; }
++        *out = s_.substr(begin, i_ - begin);
++        return true;
++    }
++
++    bool parse_scalar(std::string * out) {
++        skip_ws();
++        if (peek('"')) { return parse_string(out); }
++        if (peek('[')) { return skip_array(out); }
++        const size_t begin = i_;
++        while (i_ < s_.size() && s_[i_] != ',' && s_[i_] != '}' && s_[i_] != ']') { ++i_; }
++        *out = s_.substr(begin, i_ - begin);
++        size_t j = out->size();
++        while (j > 0 && (isspace((unsigned char) (*out)[j - 1]))) { --j; }
++        out->resize(j);
++        size_t k = 0;
++        while (k < out->size() && (unsigned char)(*out)[k] <= 0x20) { ++k; }
++        if (k) { out->erase(0, k); }
++        return true;
++    }
++
++    bool parse_object(const std::string & prefix, std::map<std::string, std::string> * out) {
++        skip_ws();
++        if (!eat('{')) { return false; }
++        skip_ws();
++        if (eat('}')) { return true; }
++        while (true) {
++            skip_ws();
++            std::string key;
++            if (!parse_string(&key)) { return false; }
++            skip_ws();
++            if (!eat(':')) { return false; }
++            const std::string path = prefix.empty() ? key : prefix + "." + key;
++            skip_ws();
++            if (peek('{')) {
++                if (!parse_object(path, out)) { return false; }
++            } else {
++                std::string value;
++                if (!parse_scalar(&value)) { return false; }
++                (*out)[path] = value;
++            }
++            skip_ws();
++            if (eat(',')) { continue; }
++            if (eat('}')) { return true; }
++            return false;
++        }
++    }
++};
++
++} // namespace
++
++bool parse_plan(const std::string & json, PfPlan * out, std::string * err) {
++    std::map<std::string, std::string> m;
++    if (!MiniJsonParser(json).parse(&m, err)) { return false; }
++    // Accept both a bare plan object and the plan+facts wrapper produced by
++    // pfPlansJson(): if keys only exist under "currentPlan.", re-key them.
++    if (!m.count("pfPlanVersion") && m.count("currentPlan.pfPlanVersion")) {
++        std::map<std::string, std::string> flat;
++        for (const auto & kv : m) {
++            std::string key = kv.first;
++            const std::string strip = key.substr(0, 12) == "currentPlan." ? key.erase(0, 12) : key;
++            if (!strip.empty() && strip.find('.') != 0) { flat[strip] = kv.second; }
++        }
++        m = std::move(flat);
++    }
++    if (!m.count("pfPlanVersion")) {
++        if (err) { *err = "missing pfPlanVersion"; }
++        return false;
++    }
++    PfPlan p = PfPlan();
++    auto get_int = [&](const char * key, int * dest) {
++        auto it = m.find(key);
++        if (it == m.end()) { return false; }
++        *dest = atoi(it->second.c_str());
++        return true;
++    };
++    auto get_ll = [&](const char * key, long long * dest) {
++        auto it = m.find(key);
++        if (it == m.end()) { return false; }
++        *dest = atoll(it->second.c_str());
++        return true;
++    };
++    auto get_str = [&](const char * key, std::string * dest) {
++        auto it = m.find(key);
++        if (it == m.end()) { return false; }
++        *dest = it->second;
++        return true;
++    };
++    get_int("pfPlanVersion", &p.planVersion);
++    get_str("cpu.cpuVariant", &p.cpuVariant);
++    get_int("cpu.nThreads", &p.nThreads);
++    get_int("cpu.nThreadsBatch", &p.nThreadsBatch);
++    get_str("kv.typeK", &p.kvTypeK);
++    get_str("kv.typeV", &p.kvTypeV);
++    get_str("kv.flashAttn", &p.flashAttn);
++    get_int("batch.nBatch", &p.nBatch);
++    get_int("batch.nUbatch", &p.nUbatch);
++    get_int("split.nGpuLayers", &p.nGpuLayers);
++    get_str("split.loadMode", &p.loadMode);
++    get_ll("heap.maxHeapBytes", &p.maxHeapBytes);
++
++    auto valid_enum = [](const std::string & v, const char * const * opts, size_t n) {
++        for (size_t i = 0; i < n; ++i) { if (v == opts[i]) { return true; } }
++        return false;
++    };
++    static const char * k_kv[] = {"f16", "q8_0", "q4_0"};
++    static const char * k_fa[] = {"auto", "on", "off"};
++    static const char * k_lm[] = {"auto", "mmap", "mlock", "mmap_mlock", "direct_io", "none"};
++    if (!valid_enum(p.kvTypeK, k_kv, 3)) { if (err) { *err = "kv.typeK not in {f16,q8_0,q4_0}"; } return false; }
++    if (!valid_enum(p.kvTypeV, k_kv, 3)) { if (err) { *err = "kv.typeV not in {f16,q8_0,q4_0}"; } return false; }
++    if (!valid_enum(p.flashAttn, k_fa, 3)) { if (err) { *err = "kv.flashAttn not in {auto,on,off}"; } return false; }
++    if (!valid_enum(p.loadMode, k_lm, 6)) { if (err) { *err = "split.loadMode not in {auto,mmap,mlock,mmap_mlock,direct_io,none}"; } return false; }
++    if (p.nThreads != -1 && (p.nThreads < 1 || p.nThreads > 64)) { if (err) { *err = "cpu.nThreads out of range"; } return false; }
++    if (p.nThreadsBatch != -1 && (p.nThreadsBatch < 1 || p.nThreadsBatch > 64)) { if (err) { *err = "cpu.nThreadsBatch out of range"; } return false; }
++    if (p.nBatch != -1 && (p.nBatch < 16 || p.nBatch > 4096)) { if (err) { *err = "batch.nBatch out of range"; } return false; }
++    if (p.nUbatch != -1 && p.nUbatch < 16) { if (err) { *err = "batch.nUbatch out of range"; } return false; }
++    if (p.nUbatch != -1 && p.nBatch != -1 && p.nUbatch > p.nBatch) { if (err) { *err = "batch.nUbatch must be <= batch.nBatch"; } return false; }
++    if (p.nGpuLayers != -2 && p.nGpuLayers < -1) { if (err) { *err = "split.nGpuLayers must be >= -1 or -2 (defer)"; } return false; }
++    if (out) { *out = p; }
++    return true;
++}
++
++std::string serialize_plan(const PfPlan & plan) {
++    std::ostringstream o;
++    o << "{"
++      << "\"pfPlanVersion\":" << plan.planVersion << ","
++      << "\"cpu\":{\"cpuVariant\":\"" << plan.cpuVariant << "\","
++      << "\"nThreads\":" << plan.nThreads << ","
++      << "\"nThreadsBatch\":" << plan.nThreadsBatch << "},"
++      << "\"kv\":{\"typeK\":\"" << plan.kvTypeK << "\","
++      << "\"typeV\":\"" << plan.kvTypeV << "\","
++      << "\"flashAttn\":\"" << plan.flashAttn << "\"},"
++      << "\"batch\":{\"nBatch\":" << plan.nBatch << ","
++      << "\"nUbatch\":" << plan.nUbatch << "},"
++      << "\"split\":{\"nGpuLayers\":" << plan.nGpuLayers << ","
++      << "\"loadMode\":\"" << plan.loadMode << "\"},"
++      << "\"heap\":{\"maxHeapBytes\":" << plan.maxHeapBytes << "}"
++      << "}";
++    return o.str();
++}
++
++std::string serialize_facts(const PfDeviceFacts & f) {
++    std::ostringstream cores;
++    for (size_t i = 0; i < f.cores.size(); ++i) {
++        if (i > 0) { cores << ","; }
++        cores << "{\"id\":" << f.cores[i].id
++              << ",\"minKhz\":" << f.cores[i].minKhz
++              << ",\"maxKhz\":" << f.cores[i].maxKhz << "}";
++    }
++    std::ostringstream hex;
++    hex << std::hex << f.hwcap;
++    std::ostringstream hex2;
++    hex2 << std::hex << f.hwcap2;
++    std::ostringstream o;
++    o << "{"
++      << "\"backendName\":\"" << f.backendName << "\","
++      << "\"nCoresOnline\":" << f.nCoresOnline << ","
++      << "\"cores\":[" << cores.str() << "],"
++      << "\"hwcap\":\"0x" << hex.str() << "\","
++      << "\"hwcap2\":\"0x" << hex2.str() << "\","
++      << "\"features\":{\"dotprod\":" << (f.hasDotprod ? "true" : "false")
++      << ",\"fp16\":" << (f.hasFp16 ? "true" : "false")
++      << ",\"i8mm\":" << (f.hasI8mm ? "true" : "false")
++      << ",\"sve\":" << (f.hasSve ? "true" : "false")
++      << ",\"sve2\":" << (f.hasSve2 ? "true" : "false")
++      << ",\"sme\":" << (f.hasSme ? "true" : "false")
++      << ",\"sme2\":" << (f.hasSme2 ? "true" : "false") << "},"
++      << "\"vulkanOk\":" << (f.vulkanOk ? "true" : "false") << ","
++      << "\"memAvailableBytes\":" << f.memAvailableBytes << ","
++      << "\"factsValid\":" << (f.factsValid ? "true" : "false")
++      << "}";
++    return o.str();
++}
++
++std::string plan_and_facts_json(const PfPlan & plan, const PfDeviceFacts & facts) {
++    std::ostringstream o;
++    o << "{\"facts\":" << serialize_facts(facts)
++      << ",\"currentPlan\":" << serialize_plan(plan) << "}";
++    return o.str();
++}
++
++} // namespace pf
+diff --git a/app/src/main/cpp/pf_plan.h b/app/src/main/cpp/pf_plan.h
+new file mode 100644
+index 0000000..b8269a4
+--- /dev/null
++++ b/app/src/main/cpp/pf_plan.h
+@@ -0,0 +1,81 @@
++// pf_plan.h - PF engine plan v0 (shared contract).
++//
++// Plain C++17, zero dependencies, no llama.cpp / NDK / Android headers so this
++// compiles anywhere (host MSVC/clang/gcc, and the NDK arm64 build).
++//
++// Consumers:
++// - pf_controller.cpp / pf_controller_test.cpp (standalone, host-tested)
++// - pf_llm.cpp via pf_llm_patch_v0.diff (adds pf_plan.cpp to the app CMake
++//   target and exposes pfPlansJson()/pfSetPlan() JNI wrappers over this module)
++//
++// JSON contract (module output and accepted input are the same shape):
++// {
++//   "pfPlanVersion": 1,
++//   "cpu":  { "cpuVariant":"", "nThreads":4, "nThreadsBatch":6 },
++//   "kv":   { "typeK":"q8_0", "typeV":"q8_0", "flashAttn":"off" },
++//   "batch":{ "nBatch":512, "nUbatch":256 },
++//   "split":{ "nGpuLayers":-2, "loadMode":"mmap" },
++//   "heap": { "maxHeapBytes":0 }
++// }
++// -1 / "" mean "engine default" for their fields; nGpuLayers -2 = defer to the
++// caller's loadModel argument.
++#pragma once
++
++#include <cstdint>
++#include <string>
++#include <vector>
++
++namespace pf {
++
++struct PfCpuCore {
++    int id = 0;
++    long long minKhz = 0;
++    long long maxKhz = 0;
++};
++
++// Device facts as gathered at runtime on device (sysfs/meminfo/getauxval in the
++// patched pf_llm.cpp); stubbed to static values in the standalone controller.
++struct PfDeviceFacts {
++    std::string backendName;        // chosen libggml-cpu variant, "" = not probed
++    int nCoresOnline = 0;
++    std::vector<PfCpuCore> cores;
++    unsigned long long hwcap = 0;
++    unsigned long long hwcap2 = 0;
++    bool hasDotprod = false;
++    bool hasFp16 = false;
++    bool hasI8mm = false;
++    bool hasSve = false;
++    bool hasSve2 = false;
++    bool hasSme = false;
++    bool hasSme2 = false;
++    bool vulkanOk = false;
++    unsigned long long memAvailableBytes = 0;
++    bool factsValid = false;
++};
++
++struct PfPlan {
++    int planVersion = 1;
++    // cpu
++    std::string cpuVariant;         // "" = engine default order (most-capable first)
++    int nThreads = -1;              // -1 = engine clamp
++    int nThreadsBatch = -1;         // -1 = nThreads
++    // kv cache
++    std::string kvTypeK = "f16";    // "f16" | "q8_0" | "q4_0"
++    std::string kvTypeV = "f16";
++    std::string flashAttn = "auto"; // "auto" | "on" | "off"
++    // batching
++    int nBatch = -1;
++    int nUbatch = -1;               // -1 = nBatch (current pf_llm behaviour)
++    // split / load
++    int nGpuLayers = -2;            // -2 = defer to loadModel arg; -1 = all GPU
++    std::string loadMode = "auto";  // "auto"|"mmap"|"mlock"|"mmap_mlock"|"direct_io"|"none"
++    // advisory heap budget for the plan layer (0 = engine decides)
++    long long maxHeapBytes = 0;
++};
++
++bool parse_plan(const std::string & json, PfPlan * out, std::string * err);
++std::string serialize_plan(const PfPlan & plan);
++std::string serialize_facts(const PfDeviceFacts & facts);
++std::string plan_and_facts_json(const PfPlan & plan, const PfDeviceFacts & facts);
++
++} // namespace pf

@@ -231,7 +231,10 @@ class DownloadWorker(
             modelId = modelId,
             fileName = finalFile.name,
             sizeBytes = finalFile.length(),
+            source = if (marker.repo.isNotEmpty()) "hub" else "download",
             shaVerified = expected != null,
+            repo = marker.repo,
+            revision = marker.revision,
         )
         DownloadRegistry.update(modelId, phase = DownloadPhase.DONE, bytesSoFar = finalFile.length())
         NotificationManagerCompat.from(applicationContext).notify(

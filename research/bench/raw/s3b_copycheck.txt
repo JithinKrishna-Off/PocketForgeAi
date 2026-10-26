@@ -1,0 +1,1 @@
+-rwxr-xr-x 1 shell shell 20478760 2026-10-23 16:28 /data/local/tmp/pfbench/libggml-vulkan.so

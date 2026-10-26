@@ -1,0 +1,15 @@
+troyed.
+10-23 16:02:03.627 10982 11105 I PFBENCH : armed run=pfa_P1_3 model=abl-qwen3-4b-2507-q4km prompt=P1 path=A max=128 file=pfbench_proc_abl-qwen3-4b-2507-q4km_P1_3.csv
+10-23 16:02:03.628 10982 11105 I PFBENCH : run begin: pfa_P1_3 (warmup=false)
+10-23 16:10:13.786 10982 11020 I HWUI    : [destroy] CanvasContext will be destroyed.
+10-23 16:10:13.814 10982 11020 W BLASTBufferQueue: Unable to open /proc/vivo_rsc/frame_set_priority: Permission denied
+10-23 16:10:13.814 10982 11020 I BLASTBufferQueue: QoSAllocBuff Successful. Ret 0 
+10-23 16:10:13.823 10982 11020 I MMUD    : [REFTC](d|dn|c|t|g|gn|l|ln):0,0,0,0,0,0,0,0
+10-23 16:10:13.832 10982 11020 I MMUD    : [REFTS](d|dn|c|t|g|gn|l|ln):0,0,0,0,0,0,0,0
+10-23 16:10:14.094 10982 10982 I ImeTracker: system_server:954f73f9: onCancelled at PHASE_CLIENT_ON_CONTROLS_CHANGED
+10-23 16:10:14.094 10982 10982 I ImeTracker: com.pocketforge.ai:183bbff0: onCancelled at PHASE_CLIENT_ALREADY_HIDDEN
+10-23 16:10:14.137 10982 10982 I ANDR-VIVO-PERF: vivo inside perf_lock_rel of client
+10-23 16:10:14.142 10982 10982 W InteractionJankMonitor: Initializing without READ_DEVICE_CONFIG permission. enabled=false, interval=1, missedFrameThreshold=3, frameTimeThreshold=64, package=com.pocketforge.ai
+10-23 16:11:21.744 10982 11043 I PFBENCH : run=pfa_P1_3 model=abl-qwen3-4b-2507-q4km prompt=P1 path=A promptMs=73892 decodeMs=484217 tok=128 decodeTokS=0.26 chars=641 reason=MAX_TOKENS np=19 ne=127 tpm=0 tgm=0 csv=pfbench_proc_abl-qwen3-4b-2507-q4km_P1_3.csv
+10-23 16:11:21.745 10982 11105 E PFBENCH : run pfa_P1_3 TIMEOUT after 376000ms; csv saved as aborted
+10-23 16:11:21.745 10982 11105 I PFBENCH : run pfa_P1_3: chars=280 wallMs=299015

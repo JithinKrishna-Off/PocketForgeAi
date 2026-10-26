@@ -9,6 +9,7 @@ import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.workDataOf
 import com.pocketforge.ai.data.catalogue.CatalogueModel
+import com.pocketforge.ai.data.hub.HfCatalogService
 import com.pocketforge.ai.data.model.ModelRegistry
 import java.io.File
 import java.io.InputStream
@@ -84,6 +85,89 @@ class ModelDownloadManager private constructor(context: Context) {
     fun cancel(modelId: String) {
         DownloadRegistry.userCancelled.add(modelId)
         WorkManager.getInstance(appContext).cancelUniqueWork("download_$modelId")
+    }
+
+    /*
+     * Hub download from the live Hugging Face list: same durable pipeline (marker + partial
+     * + WorkManager) but the source is a repo file, and provenance is kept for the registry.
+     * Success value is the generated model id, which keys the download state in the UI.
+     */
+    fun startHubDownload(
+        context: Context,
+        repoId: String,
+        revision: String,
+        fileName: String,
+        totalBytes: Long,
+        sha256: String?,
+        displayName: String,
+        author: String,
+    ): Result<String> {
+        if (!HfCatalogService.isRepoIdAllowed(repoId)) {
+            return Result.failure(java.io.IOException("Invalid repository id: $repoId"))
+        }
+        if (totalBytes <= 0) {
+            return Result.failure(java.io.IOException("The Hub did not report a file size; refusing to download"))
+        }
+        val url = HfCatalogService.resolveUrl(repoId, revision, fileName)
+            ?: return Result.failure(java.io.IOException("Unsupported revision or file path for $repoId"))
+        val id = hubModelId(repoId, fileName)
+        registry.byId(id)?.let { installed ->
+            val f = File(installed.path)
+            if (f.isFile) return Result.failure(java.io.IOException("Model already installed"))
+            // Stale registry entry whose backing file is gone: start over.
+            registry.unregister(id)
+        }
+        storageCheck(totalBytes)?.let { return Result.failure(java.io.IOException(it)) }
+        // Resume only when the marker matches this exact source; else stale partial data would
+        // be appended onto a different revision with no way to detect corruption.
+        val stale = DownloadMarker.load(downloadsDir, id)
+        val resume = stale != null && stale.url == url && stale.totalBytes == totalBytes
+        if (stale != null && !resume) DownloadMarker.remove(downloadsDir, id)
+        val localName = if (resume) stale!!.fileName
+        else uniqueLocalName(sanitizeFileName(fileName))
+        DownloadRegistry.update(
+            id = id,
+            phase = DownloadPhase.QUEUED,
+            bytesSoFar = DownloadMarker.part(downloadsDir, id).length(),
+            totalBytes = totalBytes,
+            error = null,
+        )
+        DownloadMarker.write(
+            downloadsDir,
+            DownloadMarker(
+                modelId = id,
+                url = url,
+                fileName = localName,
+                totalBytes = totalBytes,
+                sha256 = sha256,
+                supportsRange = null,
+                repo = repoId,
+                revision = revision,
+                displayName = displayName,
+                author = author,
+            ),
+        )
+        DownloadRegistry.userCancelled.remove(id)
+        val request = OneTimeWorkRequestBuilder<DownloadWorker>()
+            .setInputData(workDataOf(DownloadWorker.KEY_MODEL_ID to id))
+            .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
+            .build()
+        WorkManager.getInstance(context)
+            .enqueueUniqueWork("download_$id", ExistingWorkPolicy.KEEP, request)
+        return Result.success(id)
+    }
+
+    private fun hubModelId(repoId: String, fileName: String): String =
+        sanitizeFileName("${repoId.substringBefore('/')}_${repoId.substringAfter('/')}_${fileName}")
+
+    private fun uniqueLocalName(base: String): String {
+        if (!File(modelsDir, base).isFile) return base
+        val dot = base.lastIndexOf('.')
+        val stem = if (dot >= 0) base.substring(0, dot) else base
+        val ext = if (dot >= 0) base.substring(dot) else ""
+        var n = 1
+        while (File(modelsDir, "$stem-$n$ext").isFile) n++
+        return "$stem-$n$ext"
     }
 
     fun clearFailed(modelId: String) {

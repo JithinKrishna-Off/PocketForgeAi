@@ -82,7 +82,8 @@ if(POCKETFORGE_ENABLE_VULKAN AND TARGET ggml-vulkan)
 endif()
 
 add_library(${CMAKE_PROJECT_NAME} SHARED
-        pf_llm.cpp)
+        pf_llm.cpp
+        pf_plan.cpp)
 
 target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
         GGML_SYSTEM_ARCH=${GGML_SYSTEM_ARCH}

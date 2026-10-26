@@ -136,8 +136,12 @@ fun ModelsScreen() {
     }
 
     state.loadAttempt?.let { attempt ->
+        val attemptCard = state.cards.firstOrNull { it.model.id == attempt.modelId }
         LoadDialog(
             attempt = attempt,
+            steeringStatus = attemptCard?.steeringStatus,
+            steeringReasons = attemptCard?.steeringReasons ?: emptyList(),
+            steerDefault = state.steeringEnabledDefault,
             onConfirm = vm::confirmLoad,
             onDismiss = vm::cancelLoadDialog,
         )
@@ -219,6 +223,22 @@ private fun ModelCard(
                     "GGUF: arch=$it, quant=${card.ggufQuantisation}, trained ctx=${card.ggufContextLength}",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            if (card.installed != null && card.steeringStatus != null) {
+                val supported = card.steeringStatus == com.pocketforge.ai.data.steering.SteeringTechStatus.SUPPORTED
+                Text(
+                    when (card.steeringStatus) {
+                        com.pocketforge.ai.data.steering.SteeringTechStatus.SUPPORTED ->
+                            "Steering: supported (effect unverified)"
+                        com.pocketforge.ai.data.steering.SteeringTechStatus.UNSUPPORTED ->
+                            "Steering: unsupported - " + (card.steeringReasons.firstOrNull() ?: "unknown reason")
+                        else ->
+                            "Steering: unknown - " + (card.steeringReasons.firstOrNull() ?: "unknown reason")
+                    },
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (supported) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
+                    modifier = Modifier.padding(top = 2.dp),
                 )
             }
             Spacer(Modifier.padding(4.dp))
@@ -327,11 +347,15 @@ private fun formatSize(bytes: Long): String {
 @Composable
 private fun LoadDialog(
     attempt: LoadAttempt,
-    onConfirm: (contextLength: Int, gpuLayers: Int) -> Unit,
+    steeringStatus: com.pocketforge.ai.data.steering.SteeringTechStatus?,
+    steeringReasons: List<String>,
+    steerDefault: Boolean,
+    onConfirm: (contextLength: Int, gpuLayers: Int, steerEnabled: Boolean) -> Unit,
     onDismiss: () -> Unit,
 ) {
     var selected by remember { mutableStateOf(2048) }
     var gpuOffload by remember { mutableStateOf(false) }
+    var steerOn by remember(steerDefault) { mutableStateOf(steerDefault) }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Choose context length") },
@@ -390,6 +414,31 @@ private fun LoadDialog(
                         modifier = Modifier.padding(start = 8.dp),
                     )
                 }
+                if (steeringStatus == com.pocketforge.ai.data.steering.SteeringTechStatus.SUPPORTED) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 6.dp),
+                    ) {
+                        Switch(
+                            checked = steerOn,
+                            onCheckedChange = { steerOn = it },
+                        )
+                        Text(
+                            "Neuron steering applied at model load; requires model reload to change.",
+                            style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier.padding(start = 8.dp),
+                        )
+                    }
+                } else if (steeringStatus != null) {
+                    Text(
+                        "Steering: unsupported/unknown - " +
+                            (steeringReasons.firstOrNull() ?: "no details"),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
                 Text(
                     "These are estimates. The model file is memory-mapped; the OS, other apps and thermal " +
                         "throttling also affect real memory use.",
@@ -399,7 +448,7 @@ private fun LoadDialog(
             }
         },
         confirmButton = {
-            Button(onClick = { onConfirm(selected, if (gpuOffload) 99 else 0) }) { Text("Load") }
+            Button(onClick = { onConfirm(selected, if (gpuOffload) 99 else 0, steerOn) }) { Text("Load") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )

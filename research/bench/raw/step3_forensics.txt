@@ -1,0 +1,52 @@
+pid= date=16:14:01
+grep: /proc//status: No such file or directory
+cat: /proc//cgroup: No such file or directory
+cat: /sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq: Permission denied
+cpu0 max=2000000 smax= cur=300000
+cat: /sys/devices/system/cpu/cpu1/cpufreq/scaling_max_freq: Permission denied
+cpu1 max=2000000 smax= cur=300000
+cat: /sys/devices/system/cpu/cpu2/cpufreq/scaling_max_freq: Permission denied
+cpu2 max=2000000 smax= cur=300000
+cat: /sys/devices/system/cpu/cpu3/cpufreq/scaling_max_freq: Permission denied
+cpu3 max=2000000 smax= cur=300000
+cat: /sys/devices/system/cpu/cpu4/cpufreq/scaling_max_freq: Permission denied
+cpu4 max=2850000 smax= cur=1500000
+cat: /sys/devices/system/cpu/cpu5/cpufreq/scaling_max_freq: Permission denied
+cpu5 max=2850000 smax= cur=1400000
+cat: /sys/devices/system/cpu/cpu6/cpufreq/scaling_max_freq: Permission denied
+cpu6 max=2850000 smax= cur=1300000
+cat: /sys/devices/system/cpu/cpu7/cpufreq/scaling_max_freq: Permission denied
+cpu7 max=3400000 smax= cur=600000
+pswpin 122477508
+pswpout 220469034
+pgmajfault 127585085
+cat: /proc/pressure/memory: Permission denied
+--- sample 1 16:14:01
+cat: /proc//task/*/stat: No such file or directory
+cat: /proc//task/*/comm: No such file or directory
+grep: /proc//task/*/status: No such file or directory
+*  allowed= state= cpu= ut= st= wchan=
+--- sample 2 16:14:03
+cat: /proc//task/*/stat: No such file or directory
+cat: /proc//task/*/comm: No such file or directory
+grep: /proc//task/*/status: No such file or directory
+*  allowed= state= cpu= ut= st= wchan=
+--- sample 3 16:14:04
+cat: /proc//task/*/stat: No such file or directory
+cat: /proc//task/*/comm: No such file or directory
+grep: /proc//task/*/status: No such file or directory
+*  allowed= state= cpu= ut= st= wchan=
+--- sample 4 16:14:05
+cat: /proc//task/*/stat: No such file or directory
+cat: /proc//task/*/comm: No such file or directory
+grep: /proc//task/*/status: No such file or directory
+*  allowed= state= cpu= ut= st= wchan=
+--- sample 5 16:14:06
+cat: /proc//task/*/stat: No such file or directory
+cat: /proc//task/*/comm: No such file or directory
+grep: /proc//task/*/status: No such file or directory
+*  allowed= state= cpu= ut= st= wchan=
+pswpin 122477517
+pswpout 220469034
+pgmajfault 127585095
+cat: /proc/pressure/memory: Permission denied

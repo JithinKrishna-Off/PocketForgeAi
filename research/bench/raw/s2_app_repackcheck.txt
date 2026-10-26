@@ -1,0 +1,6 @@
+10-23 15:55:23.159 10982 11010 I PFLlamaEngine: Native engine initialized; system info: CPU : NEON = 1 | ARM_FMA = 1 | FP16_VA = 1 | MATMUL_INT8 = 1 | DOTPROD = 1 | OPENMP = 1 | KLEIDIAI = 1 | REPACK = 1 | 
+10-23 15:55:28.219 10982 11047 I PFLlamaJNI: kleidiai: primary q4 kernel feature I8MM
+10-23 15:55:28.219 10982 11047 I PFLlamaJNI: kleidiai: primary q8 kernel feature I8MM
+10-23 15:55:28.219 10982 11047 I PFLlamaJNI: kleidiai: no compatible q4_k kernels found for CPU features mask 35
+10-23 15:55:28.219 10982 11047 I PFLlamaJNI: kleidiai: no compatible f32 kernels found for CPU features mask 35
+10-23 15:55:28.219 10982 11047 I PFLlamaJNI: kleidiai: SME disabled

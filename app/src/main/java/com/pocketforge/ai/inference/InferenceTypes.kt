@@ -1,5 +1,7 @@
 package com.pocketforge.ai.inference
 
+import com.pocketforge.ai.data.steering.SteeringCompatibility
+
 /** Requested sampling + context configuration for a loaded model. */
 data class InferenceConfiguration(
     val modelPath: String,
@@ -11,6 +13,7 @@ data class InferenceConfiguration(
     val topP: Float = 0.95f,
     val topK: Int = 40,
     val seed: Long = 4242L,
+    val steerSpec: String = "",
 ) {
     fun validate(): List<String> {
         val errors = mutableListOf<String>()
@@ -24,6 +27,11 @@ data class InferenceConfiguration(
         if (temperature < 0f || temperature > 4f) errors.add("Temperature must be between 0 and 4")
         if (topP !in 0f..1f) errors.add("top_p must be between 0 and 1")
         if (topK < 0) errors.add("top_k cannot be negative")
+        if (steerSpec.isBlank()) {
+            // blank spec = steering disabled; nothing to check
+        } else {
+            errors.addAll(SteeringCompatibility.validateSpec(steerSpec).map { "steer spec: $it" })
+        }
         return errors
     }
 }

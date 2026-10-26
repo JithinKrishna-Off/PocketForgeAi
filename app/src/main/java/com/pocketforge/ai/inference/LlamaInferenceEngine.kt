@@ -200,7 +200,10 @@ class LlamaInferenceEngine private constructor(
             var finishReason: FinishReason? = null
             try {
                 LlamaBridge.clearStopFlag()
+                val pfb = com.pocketforge.ai.bench.PfBenchLogger  // debug-only measurement hooks in production loop
+                if (pfb.isArmed()) pfb.turnBegin()
                 val rc = LlamaBridge.processUserPrompt(message, maxTokens)
+                if (pfb.isArmed() && rc == 0) pfb.promptDone()
                 if (rc != 0) {
                     _state.value = EngineState.ModelReady
                     trySend(StreamEvent.Error(IllegalStateException("Failed to process prompt (rc=$rc)")))
@@ -208,10 +211,22 @@ class LlamaInferenceEngine private constructor(
                 }
                 _state.value = EngineState.Generating
 
-                var text = ""
+                val text = StringBuilder()
                 while (finishReason == null) {
                     if (turnFinished.get()) { finishReason = FinishReason.CANCELLED; break }
+                    val pfb = com.pocketforge.ai.bench.PfBenchLogger
+                    val measure = pfb.isArmed()
+                    var wallNs = 0L; var cpuNs = 0L; var wallBefore = 0L; var cpuBefore = 0L
+                    if (measure) {
+                        cpuBefore = android.os.Debug.threadCpuTimeNanos()
+                        wallBefore = System.nanoTime()
+                    }
                     val piece = LlamaBridge.generateNextToken()
+                    if (measure && piece != null) {
+                        wallNs = System.nanoTime() - wallBefore
+                        cpuNs = android.os.Debug.threadCpuTimeNanos() - cpuBefore
+                        pfb.token(wallNs, cpuNs, piece.length)
+                    }
                     if (piece == null) {
                         finishReason = when {
                             userCancelled.getAndSet(false) -> FinishReason.CANCELLED
@@ -223,43 +238,51 @@ class LlamaInferenceEngine private constructor(
                     turnTokens++
                     when (val feed = stopper.feed(piece)) {
                         is StopDetector.FeedResult.Emit -> if (feed.text.isNotEmpty()) {
-                            text += feed.text
+                            text.append(feed.text)
                             trySend(StreamEvent.Token(feed.text))
                         }
                         is StopDetector.FeedResult.StopTriggered -> {
                             if (feed.text.isNotEmpty()) {
-                                text += feed.text
+                                text.append(feed.text)
                                 trySend(StreamEvent.Token(feed.text))
                             }
                             finishReason = FinishReason.STOP_SEQUENCE
                         }
                     }
                     if (finishReason == null && text.isNotEmpty()) {
-                        turnText = StringBuilder(text)
+                        turnText = text
                     }
                 }
 
                 val flushed = stopper.flush()
                 if (flushed.isNotEmpty()) {
-                    text += flushed
+                    text.append(flushed)
                     trySend(StreamEvent.Token(flushed))
                 }
-                turnText = StringBuilder(text)
-                finishTurnOnce(text)
+                turnText = text
+                val finalText = text.toString()
+                finishTurnOnce(finalText)
                 val stats = parseStats()
+                if (com.pocketforge.ai.bench.PfBenchLogger.isArmed()) {
+                    com.pocketforge.ai.bench.PfBenchLogger.done(
+                        (finishReason ?: FinishReason.END_OF_TURN).name, finalText.length,
+                        stats.promptTokens, stats.generatedTokens, stats.promptMillis, stats.generationMillis)
+                }
                 _state.value = EngineState.ModelReady
-                trySend(StreamEvent.Done(finishReason ?: FinishReason.END_OF_TURN, text, stats))
+                trySend(StreamEvent.Done(finishReason ?: FinishReason.END_OF_TURN, finalText, stats))
             } catch (e: CancellationException) {
                 _state.value = EngineState.ModelReady
             } catch (t: Throwable) {
                 Log.e(TAG, "Generation failed", t)
                 _state.value = EngineState.Error(t)
+                if (com.pocketforge.ai.bench.PfBenchLogger.isArmed()) {
+                    com.pocketforge.ai.bench.PfBenchLogger.aborted("throwable: ${t.message}")
+                }
                 trySend(StreamEvent.Error(t))
             } finally {
                 close()
             }
         }
-
         awaitClose {
             if (_state.value is EngineState.Generating || _state.value is EngineState.ProcessingUserPrompt) {
                 userCancelled.set(true)

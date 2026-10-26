@@ -14,9 +14,11 @@ data class InstalledModel(
     val fileName: String,
     val path: String,
     val sizeBytes: Long,
-    val source: String, // "download" | "import"
+    val source: String, // "download" | "import" | "hub"
     val shaVerified: Boolean,
     val installedAt: Long,
+    val repo: String = "",      // hub provenance: source repository id, empty for local installs
+    val revision: String = "",
 )
 
 class ModelRegistry private constructor(context: Context) {
@@ -52,6 +54,8 @@ class ModelRegistry private constructor(context: Context) {
         sizeBytes: Long,
         source: String = "download",
         shaVerified: Boolean,
+        repo: String = "",
+        revision: String = "",
     ): InstalledModel {
         val model = InstalledModel(
             id = modelId,
@@ -61,6 +65,8 @@ class ModelRegistry private constructor(context: Context) {
             source = source,
             shaVerified = shaVerified,
             installedAt = System.currentTimeMillis(),
+            repo = repo,
+            revision = revision,
         )
         synchronized(lock) {
             cache = cache.filter { it.id != modelId } + model
@@ -87,7 +93,9 @@ class ModelRegistry private constructor(context: Context) {
                     .put("sizeBytes", m.sizeBytes)
                     .put("source", m.source)
                     .put("shaVerified", m.shaVerified)
-                    .put("installedAt", m.installedAt),
+                    .put("installedAt", m.installedAt)
+                    .put("repo", m.repo)
+                    .put("revision", m.revision),
             )
         }
         val tmp = File(modelsDir, "installed.json.tmp")
@@ -112,6 +120,8 @@ class ModelRegistry private constructor(context: Context) {
                     source = o.optString("source", "download"),
                     shaVerified = o.optBoolean("shaVerified", false),
                     installedAt = o.optLong("installedAt", 0),
+                    repo = o.optString("repo", ""),
+                    revision = o.optString("revision", ""),
                 )
             }.also { Log.d("PFLlamaJNI", "registry load ok: ${it.size} entries: ${it.joinToString { m -> m.id + "@" + m.path }}") }
         } catch (e: Exception) {

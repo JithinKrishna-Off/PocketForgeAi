@@ -171,12 +171,13 @@ class ChatViewModel(
     }
 
     private fun refreshConversations() {
-        _state.update { st ->
-            st.copy(
-                conversations = chatStore.list().map { c ->
-                    ConversationMeta(c.id, c.title, c.createdAt, c.messages.size)
-                },
-            )
+        // list() decrypts every chat file; run it off the main thread so the
+        // periodic refresh during generation never stalls the UI.
+        viewModelScope.launch(Dispatchers.IO) {
+            val metas = chatStore.list().map { c ->
+                ConversationMeta(c.id, c.title, c.createdAt, c.messages.size)
+            }
+            _state.update { st -> st.copy(conversations = metas) }
         }
     }
 
@@ -210,7 +211,6 @@ class ChatViewModel(
             messages = existing.messages + ChatMessage("user", trimmed),
             title = chatStore.newTitleFor(existing.messages, existing.title),
         )
-        chatStore.save(conv)
 
         _state.update { st ->
             st.copy(
@@ -220,9 +220,12 @@ class ChatViewModel(
                 error = null,
             )
         }
-        refreshConversations()
 
         sendJob = viewModelScope.launch {
+            // Persist the user turn off the main thread (encrypt + file write),
+            // then refresh the conversation list once the save is durable.
+            withContext(Dispatchers.IO) { chatStore.save(conv) }
+            refreshConversations()
             // Streaming checkpoint: every ~2 s persist the partial assistant text
             // (append-or-replace trailing assistant message), so a crash mid-stream
             // never loses more than 2 s of output. Done/Cancel rewrites replace it.

@@ -3,8 +3,10 @@ package com.pocketforge.ai.inference
 import com.pocketforge.ai.PocketForgeApp
 import com.pocketforge.ai.data.model.ModelRegistry
 import com.pocketforge.ai.device.HardwareCapabilityDetector
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import org.json.JSONObject
 
@@ -17,8 +19,8 @@ import org.json.JSONObject
  *
  *  - GPU offload: all repeating layers when an engine-visible GPU/IGPU device exists
  *    (llama.cpp clamps an oversized layer count to the model's layer count).
- *  - Threads: 0 means "auto" — the native layer picks min(4, cores-2), which is
- *    correct for the common 4+4 big.LITTLE phone layout and adapts per device.
+ *  - Threads: 0 means "auto" - the native layer picks min(6, cores-2) for explicit
+ *    thread settings (<=0 -> native auto), which adapts per device.
  *  - Context length: sized by currently available RAM, not by the biggest model.
  */
 object DeviceOptimizer {
@@ -40,9 +42,16 @@ object DeviceOptimizer {
     ): Recommendation {
         val rationale = mutableListOf<String>()
         val gpu = devices.firstOrNull { it.type == "GPU" }
-        val gpuLayers = if (gpu != null) 99 else 0
-        if (gpu != null) {
-            rationale.add("GPU ${gpu.description}: offloading all repeating layers to ${gpu.deviceName}")
+        // Measured on Dimensity 9300+/Mali-G720-Immortalis (V2503i, 2026-10-23): full
+        // Vulkan offload is slower than tuned CPU for both prefill and decode
+        // (1.5B: pp 13.5 vs 157 tok/s), and llama.cpp-on-Mali slowness is published
+        // (arXiv:2410.03613, MediaTek Dimensity 9300). Default is therefore CPU-first;
+        // a GPU offload still applies when the caller requests it explicitly.
+        // Keep layer offload off by default on Vulkan for this model class: CPU was faster
+        // in benchmarks; the explicit per-load toggle may still turn it on.
+        val gpuLayers = 0
+        if (gpu != null && gpuLayers == 0) {
+            rationale.add("GPU ${gpu.description} present but CPU execution selected (measured faster per token on this GPU class); enable/offload override available")
         } else {
             rationale.add("No engine-visible GPU: running on CPU (quantized, feature-selected variant)")
         }
@@ -50,9 +59,10 @@ object DeviceOptimizer {
         val threads = if (threadCountSetting > 0) {
             threadCountSetting
         } else {
-            // Mirrors the native auto-tune (min(4, cores-2)) so the config validates
+            // Mirrors the native auto-tune (min(6, cores-2) for explicit thread
+            // settings, native auto for <=0) so the config validates
             // before reaching the engine; still adapts to the current device SoC.
-            maxOf(1, minOf(4, cpuCores - 2))
+            maxOf(1, minOf(6, cpuCores - 2))
         }
         rationale.add("Threads: $threads (from $cpuCores cores)")
 
@@ -104,18 +114,64 @@ class ModelLoadService(private val app: PocketForgeApp) {
         contextLength: Int? = null,
         gpuLayers: Int? = null,
         threads: Int? = null,
+        steerEnabled: Boolean? = null,
     ): Result {
-        val installed = try {
-            ModelRegistry.get(app).all().firstOrNull { it.id == modelId }
-        } catch (_: Exception) {
-            null
-        } ?: return Result.Failure("Model is not installed: $modelId")
-        val file = java.io.File(installed.path)
-        if (!file.isFile || file.length() <= 0) {
-            return Result.Failure("Model file is missing on device storage")
-        }
+        val preload = withContext(Dispatchers.IO) {
+            val installed = try {
+                ModelRegistry.get(app).all().firstOrNull { it.id == modelId }
+            } catch (_: Exception) {
+                null
+            } ?: return@withContext PreloadResult.Failure("Model is not installed: $modelId")
+            val file = java.io.File(installed.path)
+            if (!file.isFile || file.length() <= 0) {
+                return@withContext PreloadResult.Failure("Model file is missing on device storage")
+            }
 
-        val settings = app.settingsStore.settings.first()
+            val settings = app.settingsStore.settings.first()
+            val useSteering = steerEnabled ?: settings.steerEnabled
+            val resolvedSteerSpec = if (useSteering) settings.steerSpec else ""
+
+            // Validate the spec grammar before touching the plan; the native layer
+            // also re-validates and fails the load on an invalid spec.
+            val steerErrors = com.pocketforge.ai.data.steering.SteeringCompatibility.validateSpec(resolvedSteerSpec)
+            if (steerErrors.isNotEmpty()) {
+                return@withContext PreloadResult.Failure(
+                    "Steering spec is invalid: " + steerErrors.joinToString("; "),
+                )
+            }
+
+            var steerUnknownNote: String? = null
+            if (resolvedSteerSpec.isNotBlank()) {
+                val assessment =
+                    com.pocketforge.ai.data.steering.SteeringCompatibility.assessGgufFile(file, resolvedSteerSpec)
+                when (assessment.techStatus) {
+                    com.pocketforge.ai.data.steering.SteeringTechStatus.UNSUPPORTED -> {
+                        return@withContext PreloadResult.Failure(
+                            "Steering is not supported for this model: " +
+                                (assessment.reasons.firstOrNull() ?: "unknown reason"),
+                        )
+                    }
+                    com.pocketforge.ai.data.steering.SteeringTechStatus.UNKNOWN -> {
+                        steerUnknownNote = assessment.reasons.firstOrNull()
+                    }
+                    com.pocketforge.ai.data.steering.SteeringTechStatus.SUPPORTED -> {}
+                }
+            }
+
+            PreloadResult.Ready(
+                settings = settings,
+                steerSpec = resolvedSteerSpec,
+                steerUnknownNote = steerUnknownNote,
+                file = file,
+            )
+        }
+        val ready = when (val p = preload) {
+            is PreloadResult.Failure -> return Result.Failure(p.message)
+            is PreloadResult.Ready -> p
+        }
+        val settings = ready.settings
+        val resolvedSteerSpec = ready.steerSpec
+        val steerUnknownNote = ready.steerUnknownNote
 
         // Wait until the native engine bootstrap finished (backends get loaded then).
         try {
@@ -137,39 +193,112 @@ class ModelLoadService(private val app: PocketForgeApp) {
             app.engine.unload()
         }
 
-        val device = HardwareCapabilityDetector.detect(app)
-        val devices = DeviceOptimizer.parseDevices(
-            LlamaBridge.listBackendsJson(),
-        )
-        val rec = DeviceOptimizer.recommend(
-            devices = devices,
-            threadCountSetting = threads ?: settings.threadCount,
-            availableRamBytes = device.availableRamBytes,
-            cpuCores = device.cpuCores,
-        )
+        val secondary = withContext(Dispatchers.IO) {
+            val device = HardwareCapabilityDetector.detect(app)
+            val devices = DeviceOptimizer.parseDevices(
+                LlamaBridge.listBackendsJson(),
+            )
+            val rec = DeviceOptimizer.recommend(
+                devices = devices,
+                threadCountSetting = threads ?: settings.threadCount,
+                availableRamBytes = device.availableRamBytes,
+                cpuCores = device.cpuCores,
+            )
 
-        val config = InferenceConfiguration(
-            modelPath = installed.path,
-            nCtx = contextLength ?: rec.contextLength,
-            nThreads = threads ?: rec.threads,
-            nGpuLayers = gpuLayers ?: rec.gpuLayers,
-            temperature = settings.temperature,
-            topP = settings.topP,
-            topK = settings.topK,
-        )
-        val errors = config.validate()
-        if (errors.isNotEmpty()) return Result.Failure(errors.joinToString("; "))
+            val config = InferenceConfiguration(
+                modelPath = ready.file.path,
+                nCtx = contextLength ?: rec.contextLength,
+                nThreads = threads ?: rec.threads,
+                nGpuLayers = gpuLayers ?: rec.gpuLayers,
+                temperature = settings.temperature,
+                topP = settings.topP,
+                topK = settings.topK,
+                steerSpec = resolvedSteerSpec,
+            )
+            val errors = config.validate()
+            if (errors.isNotEmpty()) {
+                return@withContext SecondaryResult.Failure(errors.joinToString("; "))
+            }
+
+            // Always publish the resolved spec into the active plan (empty string when
+            // disabled) so a stale spec from a previous load never carries over.
+            val planErr = try {
+                val root = JSONObject(LlamaBridge.pfPlansJson())
+                root.remove("facts")
+                val currentPlan = root.getJSONObject("currentPlan")
+                val steerObj = currentPlan.optJSONObject("steer")
+                    ?: JSONObject().also { currentPlan.put("steer", it) }
+                steerObj.put("spec", resolvedSteerSpec)
+                LlamaBridge.pfSetPlan(root.toString())
+            } catch (t: Throwable) {
+                "Failed to update the inference plan: ${t.message}"
+            }
+            if (planErr != null) {
+                return@withContext SecondaryResult.Failure(planErr)
+            }
+            SecondaryResult.Plan(rec, config)
+        }
+        val planData = when (secondary) {
+            is SecondaryResult.Failure -> return Result.Failure(secondary.message)
+            is SecondaryResult.Plan -> secondary
+        }
+        val rec = planData.rec
+        val config = planData.config
 
         val start = System.currentTimeMillis()
         return try {
             app.engine.loadModel(config)
             SessionStats.onLoaded(System.currentTimeMillis() - start)
             app.settingsStore.setLastModelId(modelId)
-            val where = rec.gpuDeviceName?.let { " (GPU: $it)" } ?: " (CPU)"
-            Result.Loaded("Optimized load${where}: ctx ${config.nCtx}, threads ${config.nThreads} in ${(System.currentTimeMillis() - start) / 1000.0}s")
+            val planDesc = try {
+                val p = withContext(Dispatchers.IO) { JSONObject(LlamaBridge.pfPlansJson()) }
+                val backend = p.optJSONObject("facts")?.optString("backendName")
+                val plan = p.optJSONObject("currentPlan")
+                val typeK = plan?.optJSONObject("kv")?.optString("typeK")
+                val typeV = plan?.optJSONObject("kv")?.optString("typeV")
+                val steer = p.optJSONObject("steer")
+                val steerNote = if (steer != null && steer.optBoolean("active")) {
+                    "steer ${steer.optString("appliedSpec").ifBlank { "on" }}"
+                } else {
+                    null
+                }
+                listOfNotNull(
+                    backend?.takeIf { it.isNotBlank() }?.let { "backend $it" },
+                    typeK?.takeIf { it.isNotBlank() }?.let {
+                        "kv $it" + (typeV?.takeIf { v -> v.isNotBlank() }?.let { v -> "/$v" } ?: "")
+                    },
+                    steerNote,
+                ).joinToString(", ")
+            } catch (_: Throwable) {
+                ""
+            }
+            val unknown = steerUnknownNote?.let { " | steering unknown: $it" } ?: ""
+            val where = rec.gpuDeviceName?.takeIf { rec.gpuLayers > 0 }?.let { " (GPU: $it)" } ?: " (CPU)"
+            val planNote = if (planDesc.isNotBlank()) " [plan: $planDesc]" else ""
+            Result.Loaded(
+                "Optimized load$where: ctx ${config.nCtx}, threads ${config.nThreads}$planNote" +
+                    " in ${(System.currentTimeMillis() - start) / 1000.0}s$unknown",
+            )
         } catch (t: Throwable) {
             Result.Failure("Optimized load failed: ${t.message}")
         }
+    }
+
+    /** Model registry/file/settings/spec resolution done off the main thread. */
+    private sealed class PreloadResult {
+        data class Failure(val message: String) : PreloadResult()
+        data class Ready(
+            val settings: com.pocketforge.ai.settings.Settings,
+            val steerSpec: String,
+            val steerUnknownNote: String?,
+            val file: java.io.File,
+        ) : PreloadResult()
+    }
+
+    /** Device detect + plan publish done off the main thread. */
+    private sealed class SecondaryResult {
+        data class Failure(val message: String) : SecondaryResult()
+        data class Plan(val rec: DeviceOptimizer.Recommendation, val config: InferenceConfiguration) : SecondaryResult()
     }
 
     fun installedModels(): List<Pair<String, String>> = try {

@@ -22,6 +22,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -35,6 +36,8 @@ data class ModelCardState(
     val ggufContextLength: Long? = null,
     val estimate2048: MemoryEstimator.Breakdown? = null,
     val estimate4096: MemoryEstimator.Breakdown? = null,
+    val steeringStatus: com.pocketforge.ai.data.steering.SteeringTechStatus? = null,
+    val steeringReasons: List<String> = emptyList(),
     val availableRamBytes: Long = 0,
 )
 
@@ -56,6 +59,7 @@ data class ModelsUiState(
     val engineStateLabel: String = "",
     val loadedModelId: String? = null,
     val currentContextLength: Int? = null,
+    val steeringEnabledDefault: Boolean = false,
 )
 
 class ModelsViewModel(private val app: PocketForgeApp) : ViewModel() {
@@ -70,7 +74,10 @@ class ModelsViewModel(private val app: PocketForgeApp) : ViewModel() {
 
     init {
         viewModelScope.launch {
-            settingsStore.settings.collect { lastSettings = it }
+            settingsStore.settings.collect { s ->
+                lastSettings = s
+                _state.update { it.copy(steeringEnabledDefault = s.steerEnabled) }
+            }
         }
         viewModelScope.launch {
             engine.state.collect { st ->
@@ -112,27 +119,36 @@ class ModelsViewModel(private val app: PocketForgeApp) : ViewModel() {
     }
 
     fun refresh() {
-        val registry = app.modelRegistry.all()
-        val downloads = com.pocketforge.ai.download.DownloadRegistry.observe().value
-        val device = HardwareCapabilityDetector.detect(app)
-        val cards = app.catalog.models.map { m ->
-            val installed = registry.firstOrNull { it.id == m.id }
-            val dl = downloads[m.id]
-            var card = ModelCardState(
-                model = m,
-                installed = installed,
-                download = dl,
-                availableRamBytes = device.availableRamBytes - device.ramThresholdBytes,
-            )
-            if (installed != null) {
-                card = parseInstalled(card, installed)
+        viewModelScope.launch {
+            val cards = withContext(Dispatchers.IO) {
+                val settings = runCatching { settingsStore.settings.first() }.getOrDefault(lastSettings)
+                val registry = app.modelRegistry.all()
+                val downloads = com.pocketforge.ai.download.DownloadRegistry.observe().value
+                val device = HardwareCapabilityDetector.detect(app)
+                app.catalog.models.map { m ->
+                    val installed = registry.firstOrNull { it.id == m.id }
+                    val dl = downloads[m.id]
+                    var card = ModelCardState(
+                        model = m,
+                        installed = installed,
+                        download = dl,
+                        availableRamBytes = device.availableRamBytes - device.ramThresholdBytes,
+                    )
+                    if (installed != null) {
+                        card = parseInstalled(card, installed, settings.steerSpec)
+                    }
+                    card
+                }
             }
-            card
+            _state.update { it.copy(cards = cards) }
         }
-        _state.update { it.copy(cards = cards) }
     }
 
-    private fun parseInstalled(card: ModelCardState, installed: InstalledModel): ModelCardState {
+    private fun parseInstalled(
+        card: ModelCardState,
+        installed: InstalledModel,
+        steerSpec: String,
+    ): ModelCardState {
         val f = File(installed.path)
         if (!f.isFile) return card.copy(installed = installed.copy(sizeBytes = -1))
         return try {
@@ -143,12 +159,22 @@ class ModelsViewModel(private val app: PocketForgeApp) : ViewModel() {
             val est4096 = MemoryEstimator.breakdown(
                 meta, meta.fileSize, 4096, lastSettings.safetyMarginMb * 1024L,
             )
+            val compat = com.pocketforge.ai.data.steering.SteeringCompatibility
+            val assessment = if (steerSpec.isNotBlank()) {
+                compat.assessGgufFile(f, steerSpec)
+            } else {
+                val dim14 = meta.tensors.firstOrNull { it.name == "blk.14.ffn_down.weight" }
+                    ?.dims?.getOrNull(0)?.toInt()
+                compat.evaluate(meta.architecture.ifBlank { null }, meta.blockCount?.toInt(), dim14, 14, 8949)
+            }
             card.copy(
                 ggufArchitecture = meta.architecture,
                 ggufQuantisation = meta.quantName(),
                 ggufContextLength = meta.contextLengthOr(0),
                 estimate2048 = est2048,
                 estimate4096 = est4096,
+                steeringStatus = assessment.techStatus,
+                steeringReasons = assessment.reasons,
             )
         } catch (e: Exception) {
             card.copy(installed = installed)
@@ -235,7 +261,7 @@ class ModelsViewModel(private val app: PocketForgeApp) : ViewModel() {
         _state.update { it.copy(loadAttempt = null) }
     }
 
-    fun confirmLoad(contextLength: Int, gpuLayers: Int) {
+    fun confirmLoad(contextLength: Int, gpuLayers: Int, steerEnabled: Boolean) {
         val attempt = _state.value.loadAttempt ?: return
         val modelId = attempt.modelId
         _state.update { it.copy(busy = true, loadAttempt = null) }
@@ -244,12 +270,13 @@ class ModelsViewModel(private val app: PocketForgeApp) : ViewModel() {
                 modelId = modelId,
                 contextLength = contextLength,
                 gpuLayers = if (gpuLayers > 0) gpuLayers else null,
+                steerEnabled = steerEnabled,
             )) {
                 is ModelLoadService.Result.Loaded -> {
                     _state.update {
                         it.copy(busy = false, loadedModelId = modelId, currentContextLength = contextLength)
                     }
-                    message("Model loaded (ctx $contextLength) — ${r.summary}")
+                    message("Model loaded (ctx $contextLength) - ${r.summary}")
                 }
                 is ModelLoadService.Result.Failure -> {
                     _state.update { it.copy(busy = false, loadedModelId = null) }

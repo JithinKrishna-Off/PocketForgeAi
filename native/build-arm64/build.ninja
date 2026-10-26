@@ -57,6 +57,14 @@ build CMakeFiles/pocketforge-llm.dir/pf_llm.cpp.o: CXX_COMPILER__pocketforge-llm
   OBJECT_DIR = CMakeFiles\pocketforge-llm.dir
   OBJECT_FILE_DIR = CMakeFiles\pocketforge-llm.dir
 
+build CMakeFiles/pocketforge-llm.dir/pf_plan.cpp.o: CXX_COMPILER__pocketforge-llm_unscanned_Release C$:/Users/ASUS/Desktop/PocketForgeAI/app/src/main/cpp/pf_plan.cpp || cmake_object_order_depends_target_pocketforge-llm
+  DEFINES = -DGGML_BACKEND_DL -DGGML_CPU_KLEIDIAI=1 -DGGML_OPENMP=1 -DGGML_SHARED -DGGML_SYSTEM_ARCH=ARM -DLLAMA_SHARED -Dpocketforge_llm_EXPORTS
+  DEP_FILE = CMakeFiles\pocketforge-llm.dir\pf_plan.cpp.o.d
+  FLAGS = -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security  -static-openmp -O3 -DNDEBUG  -std=gnu++17 -fPIC -pthread
+  INCLUDES = -IC:/Users/ASUS/Desktop/PocketForgeAI/app/src/main/cpp/../../../../third_party/llama.cpp -IC:/Users/ASUS/Desktop/PocketForgeAI/app/src/main/cpp/../../../../third_party/llama.cpp/common -IC:/Users/ASUS/Desktop/PocketForgeAI/app/src/main/cpp/../../../../third_party/llama.cpp/include -IC:/Users/ASUS/Desktop/PocketForgeAI/app/src/main/cpp/../../../../third_party/llama.cpp/ggml/include -IC:/Users/ASUS/Desktop/PocketForgeAI/app/src/main/cpp/../../../../third_party/llama.cpp/ggml/src -IC:/Users/ASUS/Desktop/PocketForgeAI/third_party/llama.cpp/src/../include -IC:/Users/ASUS/Desktop/PocketForgeAI/third_party/llama.cpp/ggml/src/../include -IC:/Users/ASUS/Desktop/PocketForgeAI/third_party/llama.cpp/common/. -IC:/Users/ASUS/Desktop/PocketForgeAI/third_party/llama.cpp/vendor/nlohmann/.. -IC:/Users/ASUS/Desktop/PocketForgeAI/third_party/llama.cpp/vendor/sheredom/..
+  OBJECT_DIR = CMakeFiles\pocketforge-llm.dir
+  OBJECT_FILE_DIR = CMakeFiles\pocketforge-llm.dir
+
 
 # =============================================================================
 # Link build statements for SHARED_LIBRARY target pocketforge-llm
@@ -65,7 +73,7 @@ build CMakeFiles/pocketforge-llm.dir/pf_llm.cpp.o: CXX_COMPILER__pocketforge-llm
 #############################################
 # Link the shared library libpocketforge-llm.so
 
-build libpocketforge-llm.so: CXX_SHARED_LIBRARY_LINKER__pocketforge-llm_Release CMakeFiles/pocketforge-llm.dir/pf_llm.cpp.o | bin/libllama-common.so bin/libllama.so bin/libggml.so bin/libggml-base.so build-llama/common/libllama-common-base.a || bin/libggml-base.so bin/libggml.so bin/libllama-common.so bin/libllama.so build-llama/common/libllama-common-base.a
+build libpocketforge-llm.so: CXX_SHARED_LIBRARY_LINKER__pocketforge-llm_Release CMakeFiles/pocketforge-llm.dir/pf_llm.cpp.o CMakeFiles/pocketforge-llm.dir/pf_plan.cpp.o | bin/libllama-common.so bin/libllama.so bin/libggml.so bin/libggml-base.so build-llama/common/libllama-common-base.a || bin/libggml-base.so bin/libggml.so bin/libllama-common.so bin/libllama.so build-llama/common/libllama-common-base.a
   DEP_FILE = CMakeFiles\pocketforge-llm.dir\link.d
   LANGUAGE_COMPILE_FLAGS = -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security  -static-openmp -O3 -DNDEBUG
   LINK_FLAGS = -static-libstdc++ -Wl,--build-id=sha1 -Wl,--no-rosegment -Wl,--no-undefined-version -Wl,--fatal-warnings -Wl,--no-undefined -Qunused-arguments -static-openmp -Wl,--gc-sections   -Xlinker --dependency-file=CMakeFiles\pocketforge-llm.dir\link.d

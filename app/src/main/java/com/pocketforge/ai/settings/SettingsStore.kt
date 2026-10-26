@@ -2,6 +2,7 @@ package com.pocketforge.ai.settings
 
 import android.content.Context
 import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.floatPreferencesKey
 import androidx.datastore.preferences.core.intPreferencesKey
@@ -30,6 +31,8 @@ data class Settings(
     val safetyMarginMb: Int = 1024,
     val systemPrompt: String = DEFAULT_SYSTEM_PROMPT,
     val lastModelId: String = "",
+    val steerEnabled: Boolean = false,
+    val steerSpec: String = "14:8949:+1,13:7956:-1",
 )
 
 data class SettingsKeys(
@@ -42,6 +45,8 @@ data class SettingsKeys(
     val marginMb: Preferences.Key<Int> = intPreferencesKey("safety_margin_mb"),
     val systemPrompt: Preferences.Key<String> = stringPreferencesKey("system_prompt"),
     val lastModelId: Preferences.Key<String> = stringPreferencesKey("last_model_id"),
+    val steerEnabled: Preferences.Key<Boolean> = booleanPreferencesKey("steer_enabled"),
+    val steerSpec: Preferences.Key<String> = stringPreferencesKey("steer_spec"),
 )
 
 class SettingsStore(private val context: Context) {
@@ -75,6 +80,8 @@ class SettingsStore(private val context: Context) {
                 safetyMarginMb = p[keys.marginMb] ?: 1024,
                 systemPrompt = personaStore.loadDefault() ?: DEFAULT_SYSTEM_PROMPT,
                 lastModelId = p[keys.lastModelId] ?: "",
+                steerEnabled = p[keys.steerEnabled] ?: false,
+                steerSpec = p[keys.steerSpec] ?: "14:8949:+1,13:7956:-1",
             )
         })
     }
@@ -91,6 +98,8 @@ class SettingsStore(private val context: Context) {
         context.dataStore.edit { it.remove(keys.systemPrompt) }
     }
     suspend fun setLastModelId(value: String) = context.dataStore.edit { it[keys.lastModelId] = value }
+    suspend fun setSteerEnabled(value: Boolean) = context.dataStore.edit { it[keys.steerEnabled] = value }
+    suspend fun setSteerSpec(value: String) = context.dataStore.edit { it[keys.steerSpec] = value }
 
     suspend fun clearSystemPrompt() = context.dataStore.edit {
         it.remove(keys.systemPrompt)
