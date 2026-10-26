@@ -143,6 +143,10 @@ fun SettingsScreen() {
         }
 
         item {
+            ServerCard(state, vm)
+        }
+
+        item {
             Card { Column(Modifier.padding(14.dp)) {
                 Text("System prompt", style = MaterialTheme.typography.titleMedium)
                 androidx.compose.material3.OutlinedTextField(
@@ -243,6 +247,101 @@ fun SettingsScreen() {
             Text(msg, style = MaterialTheme.typography.bodySmall)
             TextButton(onClick = vm::dismissMessage) { Text("OK") }
         } }
+    }
+}
+
+@Composable
+private fun ServerCard(state: SettingsUiState, vm: SettingsViewModel) {
+    var portText by remember(state.settings.serverPort) { mutableStateOf(state.settings.serverPort.toString()) }
+    val server = state.serverStatus
+    val port = portText.toIntOrNull()
+    val portValid = port != null && port in 1024..65535
+    Card {
+        Column(Modifier.padding(14.dp)) {
+            Text("Desktop server", style = MaterialTheme.typography.titleMedium)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                androidx.compose.material3.Switch(
+                    checked = state.settings.serverEnabled,
+                    onCheckedChange = { vm.setServerEnabled(it) },
+                )
+                Text(
+                    "Enable desktop server",
+                    modifier = Modifier.padding(start = 8.dp),
+                )
+            }
+            Text(
+                "Lets your PC chat with the model on this phone. The phone keeps the conversation session. " +
+                    "USB: adb reverse tcp:${state.settings.serverPort} tcp:${state.settings.serverPort}, then the " +
+                    "desktop uses 127.0.0.1. Wi-Fi: the desktop uses the phone's LAN IP.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            if (state.settings.serverEnabled) {
+                androidx.compose.material3.OutlinedTextField(
+                    value = portText,
+                    onValueChange = { portText = it.filter { ch -> ch.isDigit() }.take(5) },
+                    modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
+                    singleLine = true,
+                    label = { Text("Port (1024-65535)") },
+                    supportingText = {
+                        if (!portValid) {
+                            Text("Port must be 1024-65535", color = MaterialTheme.colorScheme.error)
+                        } else {
+                            Text("Takes effect the next time the server starts")
+                        }
+                    },
+                )
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                    TextButton(
+                        enabled = portValid && port != state.settings.serverPort,
+                        onClick = { vm.setServerPort(port!!) },
+                    ) { Text("Apply port") }
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    androidx.compose.material3.Switch(
+                        checked = state.settings.serverLanAccess,
+                        onCheckedChange = { vm.setServerLanAccess(it) },
+                    )
+                    Text(
+                        "Allow LAN access",
+                        modifier = Modifier.padding(start = 8.dp),
+                    )
+                }
+                if (state.settings.serverLanAccess) {
+                    Text(
+                        "Any device on this Wi-Fi can reach the model.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
+                Text(
+                    when {
+                        server.running -> "Running at ${server.boundAddress}:${server.port}"
+                        server.lastError != null -> "Failed: ${server.lastError}"
+                        else -> "Stopped"
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.padding(top = 6.dp),
+                )
+                if (server.running && server.pairingCode.isNotBlank()) {
+                    Text(
+                        "Pairing code: ${server.pairingCode}",
+                        style = MaterialTheme.typography.bodyLarge,
+                        modifier = Modifier.padding(top = 4.dp),
+                    )
+                    Text(
+                        "Enter this code once in the desktop app to pair.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                if (server.pairedClients > 0) {
+                    TextButton(onClick = vm::revokeServerTokens) {
+                        Text("Revoke desktop access (${server.pairedClients} paired)")
+                    }
+                }
+            }
+        }
     }
 }
 

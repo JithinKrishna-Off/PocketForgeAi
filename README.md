@@ -135,23 +135,47 @@ git submodule update --init --recursive    # pulls third_party/llama.cpp
 
 ## APK
 
-Pre-built debug APK, v0.2.0 (versionCode 2), arm64-v8a: **`artifacts/PocketForgeAI-v0.2.0-arm64-v8a.apk`** — install directly:
+Pre-built debug APK, v0.3.0 (versionCode 3), arm64-v8a: **`artifacts/PocketForgeAI-v0.3.0-server-arm64-v8a.apk`** — install directly:
 
 ```powershell
-adb install -r -t artifacts\PocketForgeAI-v0.2.0-arm64-v8a.apk
+adb install -r -t artifacts\PocketForgeAI-v0.3.0-server-arm64-v8a.apk
 ```
 
 | 📦 Artifact | 📏 Size | 🔏 SHA-256 |
 |---|---|---|
-| `PocketForgeAI-v0.2.0-arm64-v8a.apk` | 30,270,773 B | `29d3f4ec59b091f096ca9a43edb58113213128310d4273e68597297fced1e6ae` |
+| `PocketForgeAI-v0.3.0-server-arm64-v8a.apk` | 28,020,490 B | `52e509e701539329015b8fa780a493683432e3e8936da58a5e156dfa1b9d5a38` |
+| `desktop/PocketForgeDesktop-win-x64.zip` (Windows client + MCP tools) | 90,889,113 B | `b44f71884aed37e101748d42b734d29c5f4867b3ad11854d7793afa1a6d2cffb` |
 
 Verify before install:
 
 ```powershell
-Get-FileHash artifacts\PocketForgeAI-v0.2.0-arm64-v8a.apk -Algorithm SHA256
+Get-FileHash artifacts\PocketForgeAI-v0.3.0-server-arm64-v8a.apk -Algorithm SHA256
 ```
 
-(Also mirrored locally under `releases/` with its `.sha256` sidecar; `artifacts/` is the git-tracked copy.)
+(Also mirrored locally under `releases/` with its `.sha256` sidecar; `artifacts/` is the git-tracked copy. Full manifest: [`releases/manifest.md`](releases/manifest.md).)
+
+## 🖥️ Desktop client + MCP (v0.3.0)
+
+`desktop/` holds the Windows companion: a lightweight WPF chat client that connects
+to the phone's **Desktop server** (Settings → Desktop server; pairing code +
+bearer token), streams responses over SSE, and runs a laptop-side **MCP tool
+host** (search_files, read_file, list_dir, git_status, approval-gated run_command
+behind a workspace-roots + secret-deny security layer).
+
+```powershell
+cd desktop
+dotnet build app/PocketForgeDesktop.csproj     # WPF client
+dotnet build McpTools/McpTools.csproj          # MCP tool server (spawned by the app)
+dotnet run --project McpTools                  # -- selftest (35 checks)
+powershell -File smoke-test.ps1                # contract tests vs mock server
+powershell -File build.ps1                     # single-file publish + zip
+```
+
+- 📶 Connect over Wi-Fi (phone IP + port 8751) or USB (`adb reverse tcp:8751 tcp:8751`).
+- 🔐 Pair with the 6-digit code shown in the phone's server settings; the token is
+  stored DPAPI-protected; revoke any time on the phone.
+- 🛠️ Protocol + security model: [`desktop/docs/mcp-tools.md`](desktop/docs/mcp-tools.md),
+  [`docs/pocketforge-api-v1.md`](docs/pocketforge-api-v1.md).
 
 ## Architecture
 

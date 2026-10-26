@@ -1,16 +1,23 @@
 package com.pocketforge.ai.ui.screens
 
+import android.content.Intent
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.pocketforge.ai.PocketForgeApp
 import com.pocketforge.ai.crypto.ChatCrypto
 import com.pocketforge.ai.crypto.PanicWipe
 import com.pocketforge.ai.inference.InferenceConfiguration
+import com.pocketforge.ai.server.PhoneServerController
+import com.pocketforge.ai.server.PhoneServerService
+import com.pocketforge.ai.server.ServerStatus
 import com.pocketforge.ai.settings.Settings
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -28,6 +35,7 @@ data class SettingsUiState(
     val wipeBusy: Boolean = false,
     val flagSecure: Boolean = true,
     val panicShortcut: Boolean = false,
+    val serverStatus: ServerStatus = ServerStatus(),
 )
 
 class SettingsViewModel(private val app: PocketForgeApp) : ViewModel() {
@@ -35,10 +43,26 @@ class SettingsViewModel(private val app: PocketForgeApp) : ViewModel() {
     private val _state = MutableStateFlow(SettingsUiState())
     val state: StateFlow<SettingsUiState> = _state.asStateFlow()
 
+    private val serverController = PhoneServerController.get(app)
+
     init {
         viewModelScope.launch {
             app.settingsStore.settings.collect { s ->
                 _state.update { it.copy(settings = s) }
+            }
+        }
+        viewModelScope.launch {
+            serverController.status.collect { s ->
+                _state.update { it.copy(serverStatus = s) }
+            }
+        }
+        // The toggle is opt-in every boot: if it survived process death without the
+        // service actually running, flip it back off.
+        viewModelScope.launch {
+            delay(2500)
+            val s = runCatching { app.settingsStore.settings.first() }.getOrNull() ?: return@launch
+            if (s.serverEnabled && !serverController.status.value.running && !serverController.isStartPending()) {
+                app.settingsStore.setServerEnabled(false)
             }
         }
         refreshPrivacyStatus()
@@ -72,6 +96,26 @@ class SettingsViewModel(private val app: PocketForgeApp) : ViewModel() {
     fun setSystemPrompt(v: String) = viewModelScope.launch { app.settingsStore.setSystemPrompt(v) }
     fun setSteeringEnabled(v: Boolean) = viewModelScope.launch { app.settingsStore.setSteerEnabled(v) }
     fun setSteerSpec(v: String) = viewModelScope.launch { app.settingsStore.setSteerSpec(v) }
+
+    // ---- desktop server ----
+    fun setServerEnabled(v: Boolean) {
+        viewModelScope.launch {
+            app.settingsStore.setServerEnabled(v)
+            if (v) {
+                ContextCompat.startForegroundService(app, Intent(app, PhoneServerService::class.java))
+            } else {
+                app.stopService(Intent(app, PhoneServerService::class.java))
+                serverController.stop()
+            }
+        }
+    }
+
+    fun setServerPort(v: Int) = viewModelScope.launch { app.settingsStore.setServerPort(v) }
+    fun setServerLanAccess(v: Boolean) = viewModelScope.launch { app.settingsStore.setServerLanAccess(v) }
+
+    fun revokeServerTokens() {
+        viewModelScope.launch(Dispatchers.IO) { serverController.revokeTokens() }
+    }
 
     // ---- privacy panel ----
     fun setWipeAlsoModels(v: Boolean) = _state.update { it.copy(wipeAlsoModels = v) }

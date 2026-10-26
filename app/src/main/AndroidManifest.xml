@@ -2,8 +2,9 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
-    <!-- INTERNET is used only for model downloads (and optional source checks).
-         All chat and inference is fully offline after a model is installed. -->
+    <!-- INTERNET is used only for model downloads (and optional source checks) and by
+         the optional local desktop server (loopback/LAN listener). All chat and
+         inference is fully offline after a model is installed. -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
@@ -35,6 +36,12 @@
             android:name="androidx.work.impl.foreground.SystemForegroundService"
             android:foregroundServiceType="dataSync"
             tools:node="merge" />
+
+        <!-- Desktop server (Settings -> Desktop server): hosts the phone API while enabled -->
+        <service
+            android:name=".server.PhoneServerService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
 
         <!-- Shizuku (Performance > Memory, FULL mode): required so the Shizuku server can
              deliver its binder to this app. See https://github.com/RikkaApps/Shizuku-API -->

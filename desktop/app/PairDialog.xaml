@@ -1,0 +1,48 @@
+<Window x:Class="PocketForgeDesktop.PairDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Pair with phone" SizeToContent="WidthAndHeight" ResizeMode="NoResize"
+        WindowStartupLocation="CenterOwner" ShowInTaskbar="False">
+    <Window.Resources>
+        <Style x:Key="ButtonStyle" TargetType="Button">
+            <Setter Property="Background" Value="{DynamicResource CardBrush}"/>
+            <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding" Value="14,6"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Bd"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="6" Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource HoverBrush}"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter Property="Opacity" Value="0.45"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </Window.Resources>
+    <StackPanel Margin="20,16" Width="320">
+        <TextBlock Text="Enter the 6-digit pairing code shown on the phone"
+                   TextWrapping="Wrap" Foreground="{DynamicResource TextBrush}"/>
+        <TextBox x:Name="CodeBox" MaxLength="6" FontSize="24" Margin="0,12,0,0"
+                 HorizontalContentAlignment="Center" KeyDown="CodeBox_KeyDown"/>
+        <TextBlock x:Name="ErrorText" Text="" Foreground="{DynamicResource ErrorBrush}"
+                   TextWrapping="Wrap" Margin="0,10,0,0"/>
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,12,0,0">
+            <Button Content="Pair" Click="Pair_Click" Style="{StaticResource ButtonStyle}"/>
+            <Button Content="Cancel" Click="Cancel_Click" Style="{StaticResource ButtonStyle}" Margin="8,0,0,0"/>
+        </StackPanel>
+    </StackPanel>
+</Window>
