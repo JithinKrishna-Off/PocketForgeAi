@@ -10,3 +10,4 @@ captures/
 *.apk
 !artifacts/*.apk
 research/data/
+releases/windows/*.zip
