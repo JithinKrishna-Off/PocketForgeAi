@@ -1,0 +1,19 @@
+total 152294
+drwxrwxrwx 6 shell shell     3452 2026-10-23 16:14 .
+drwxrwx--x 5 shell shell     3452 2026-10-23 16:03 ..
+-rw-rw-rw- 1 shell shell      829 2026-10-23 16:13 forensics.sh
+-rw-rw-rw- 1 shell shell  9847872 2026-10-21 20:28 libggml-base.so
+-rw-rw-rw- 1 shell shell  9762208 2026-10-23 12:07 libggml-cpu-android_armv8.6_1.so
+-rw-rw-rw- 1 shell shell  1817000 2026-10-21 20:28 libggml.so
+-rw-rw-rw- 1 shell shell  4275920 2026-10-22 11:58 libllama-bench-impl.so
+-rw-rw-rw- 1 shell shell 84538392 2026-10-21 20:28 libllama-common.so
+-rw-rw-rw- 1 shell shell 45493216 2026-10-21 20:28 libllama.so
+-rwxr-xr-x 1 shell shell     7256 2026-10-22 11:58 llama-bench
+drwxrwxrwx 2 shell shell     3452 2026-10-22 12:19 models
+-rwxr-xr-x 1 shell shell     5387 2026-10-22 12:14 phase0.sh
+-rw-rw-rw- 1 shell shell        0 2026-10-22 12:14 phase0_nohup.log
+-rwxrwxrwx 1 shell shell     2118 2026-10-23 11:18 phase0b.sh
+-rwxrwxrwx 1 shell shell     1825 2026-10-23 12:07 phase0c.sh
+drwxrwxrwx 2 shell shell     3452 2026-10-23 12:07 results
+drwxrwxrwx 2 shell shell     3452 2026-10-22 12:11 results_v1
+drwxrwxrwx 2 shell shell     3452 2026-10-23 12:07 spare

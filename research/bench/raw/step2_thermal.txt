@@ -1,0 +1,17 @@
+Thermal Status: 2
+	Temperature{mValue=69.304, mType=0, mName=CPU, mStatus=0}
+	Temperature{mValue=69.304, mType=1, mName=GPU, mStatus=0}
+	Temperature{mValue=69.267, mType=9, mName=NPU, mStatus=0}
+	Temperature{mValue=69.267, mType=13, mName=SOC, mStatus=0}
+	Temperature{mValue=69.267, mType=10, mName=TPU, mStatus=0}
+	Temperature{mValue=42.131, mType=3, mName=SKIN, mStatus=2}
+	Temperature{mValue=41.1, mType=2, mName=BATTERY, mStatus=0}
+	Temperature{mValue=49.352, mType=5, mName=POWER_AMPLIFIER, mStatus=0}
+	Temperature{mValue=53.597, mType=0, mName=CPU, mStatus=0}
+	Temperature{mValue=53.597, mType=1, mName=GPU, mStatus=0}
+	Temperature{mValue=39.4, mType=2, mName=BATTERY, mStatus=0}
+	Temperature{mValue=42.134, mType=3, mName=SKIN, mStatus=2}
+	Temperature{mValue=45.497, mType=5, mName=POWER_AMPLIFIER, mStatus=0}
+	Temperature{mValue=53.597, mType=9, mName=NPU, mStatus=0}
+	Temperature{mValue=53.597, mType=10, mName=TPU, mStatus=0}
+	Temperature{mValue=53.597, mType=13, mName=SOC, mStatus=0}

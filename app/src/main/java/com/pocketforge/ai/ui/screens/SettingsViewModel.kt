@@ -70,6 +70,8 @@ class SettingsViewModel(private val app: PocketForgeApp) : ViewModel() {
     fun setThreads(v: Int) = viewModelScope.launch { app.settingsStore.setThreads(v) }
     fun setSafetyMarginMb(v: Int) = viewModelScope.launch { app.settingsStore.setSafetyMarginMb(v) }
     fun setSystemPrompt(v: String) = viewModelScope.launch { app.settingsStore.setSystemPrompt(v) }
+    fun setSteeringEnabled(v: Boolean) = viewModelScope.launch { app.settingsStore.setSteerEnabled(v) }
+    fun setSteerSpec(v: String) = viewModelScope.launch { app.settingsStore.setSteerSpec(v) }
 
     // ---- privacy panel ----
     fun setWipeAlsoModels(v: Boolean) = _state.update { it.copy(wipeAlsoModels = v) }
@@ -120,7 +122,9 @@ class SettingsViewModel(private val app: PocketForgeApp) : ViewModel() {
                     config = InferenceConfiguration(
                         modelPath = "",
                         nCtx = _state.value.settings.contextLength,
-                        nThreads = _state.value.settings.threadCount.takeIf { it > 0 } ?: 4,
+                        // native auto rule: min(6, hw-2) for explicit values; <=0 -> native auto
+                        nThreads = _state.value.settings.threadCount.takeIf { it > 0 }
+                            ?: maxOf(1, minOf(6, Runtime.getRuntime().availableProcessors() - 2)),
                     ),
                 )
                 app.contentResolver.openOutputStream(uri)?.use { os ->

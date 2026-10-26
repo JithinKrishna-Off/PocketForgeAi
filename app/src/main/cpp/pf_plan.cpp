@@ -186,6 +186,7 @@ bool parse_plan(const std::string & json, PfPlan * out, std::string * err) {
     get_int("batch.nUbatch", &p.nUbatch);
     get_int("split.nGpuLayers", &p.nGpuLayers);
     get_str("split.loadMode", &p.loadMode);
+    get_str("steer.spec", &p.steerSpec);
     get_ll("heap.maxHeapBytes", &p.maxHeapBytes);
 
     auto valid_enum = [](const std::string & v, const char * const * opts, size_t n) {
@@ -210,6 +211,14 @@ bool parse_plan(const std::string & json, PfPlan * out, std::string * err) {
 }
 
 std::string serialize_plan(const PfPlan & plan) {
+    auto json_escape = [](const std::string & s) {
+        std::string out;
+        for (char c : s) {
+            if (c == '"' || c == '\\') { out += '\\'; out += c; }
+            else { out += c; }
+        }
+        return out;
+    };
     std::ostringstream o;
     o << "{"
       << "\"pfPlanVersion\":" << plan.planVersion << ","
@@ -223,6 +232,7 @@ std::string serialize_plan(const PfPlan & plan) {
       << "\"nUbatch\":" << plan.nUbatch << "},"
       << "\"split\":{\"nGpuLayers\":" << plan.nGpuLayers << ","
       << "\"loadMode\":\"" << plan.loadMode << "\"},"
+      << "\"steer\":{\"spec\":\"" << json_escape(plan.steerSpec) << "\"},"
       << "\"heap\":{\"maxHeapBytes\":" << plan.maxHeapBytes << "}"
       << "}";
     return o.str();

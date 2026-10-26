@@ -67,8 +67,13 @@ struct PfPlan {
     int nBatch = -1;
     int nUbatch = -1;               // -1 = nBatch (current pf_llm behaviour)
     // split / load
-    int nGpuLayers = -2;            // -2 = defer to loadModel arg; -1 = all GPU
+    int nGpuLayers = -2;            // -2 = defer to the caller's loadModel argument; -1 = all GPU
     std::string loadMode = "auto";  // "auto"|"mmap"|"mlock"|"mmap_mlock"|"direct_io"|"none"
+    // Qwen3.5 neuron steering, "" = disabled. Spec grammar:
+    // "<layer>:<neuron>:<dir>[:<dose>][,...]", dir is +1|-1, dose >= 0 (default 1).
+    // Parsed once per model load (qwen35 load_steering); invalid specs fail the
+    // load with an error in the engine logs. Non-qwen35 models ignore it.
+    std::string steerSpec;
     // advisory heap budget for the plan layer (0 = engine decides)
     long long maxHeapBytes = 0;
 };

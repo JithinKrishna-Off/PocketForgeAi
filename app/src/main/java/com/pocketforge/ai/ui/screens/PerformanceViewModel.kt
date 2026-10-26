@@ -3,6 +3,7 @@ package com.pocketforge.ai.ui.screens
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.pocketforge.ai.PocketForgeApp
+import com.pocketforge.ai.data.gguf.GgufMetadata
 import com.pocketforge.ai.data.gguf.GgufParser
 import com.pocketforge.ai.data.memory.DumpsysMeminfoParser
 import com.pocketforge.ai.data.memory.MemoryMode
@@ -103,7 +104,7 @@ class PerformanceViewModel(private val app: PocketForgeApp) : ViewModel() {
     }.flowOn(Dispatchers.IO)
 
     init {
-        viewModelScope.launch {
+        viewModelScope.launch(Dispatchers.IO) {
             while (isActive) {
                 poll()
                 delay(1000)
@@ -140,14 +141,56 @@ class PerformanceViewModel(private val app: PocketForgeApp) : ViewModel() {
         shizuku.start()
     }
 
+    // Poll caches: the GGUF header parse and the native context-state query are
+    // only redone when the loaded model changes, and device facts are refreshed
+    // every 5th tick. Previously every 1 s tick re-parsed a GGUF header, walked
+    // tokenizer arrays and blocked on the engine dispatcher lane on the main
+    // thread.
+    private var ggufCacheKey: String? = null
+    private var ggufCached: GgufMetadata? = null
+    private var ctxStateKey: ModelRuntimeInfo? = null
+    private var ctxStateBytes: Long? = null
+    private var deviceTick = 0
+    private var deviceCached: DeviceInfo? = null
+
     private fun poll() {
-        val device = HardwareCapabilityDetector.detect(app)
+        val device = if (deviceTick % 5 == 0 || deviceCached == null) {
+            HardwareCapabilityDetector.detect(app).also { deviceCached = it }
+        } else {
+            deviceCached!!
+        }
+        deviceTick++
         val info = engine.runtimeInfo.value
-        val gguf = info?.let {
-            try {
-                GgufParser.parse(File(app.modelRegistry.all().firstOrNull()?.path ?: ""))
-            } catch (_: Throwable) {
+        // Key the metadata cache on the LOADED model (matched by size in the
+        // registry), not on registry entry 0.
+        val gguf: GgufMetadata? = if (info == null) {
+            ggufCacheKey = null
+            ggufCached = null
+            null
+        } else {
+            val path = app.modelRegistry.all().firstOrNull { it.sizeBytes == info.sizeBytes }?.path
+            if (path != null && path == ggufCacheKey) {
+                ggufCached
+            } else {
+                ggufCacheKey = path
+                ggufCached = try {
+                    path?.let { GgufParser.parse(File(it)) }
+                } catch (_: Throwable) {
+                    null
+                }
+                ggufCached
+            }
+        }
+        val contextState: Long? = when {
+            info == null -> {
+                ctxStateKey = null
+                ctxStateBytes = null
                 null
+            }
+            info == ctxStateKey -> ctxStateBytes
+            else -> engine.contextStateSizeBytes().also {
+                ctxStateBytes = it
+                ctxStateKey = info
             }
         }
         _state.update { s ->
@@ -159,7 +202,7 @@ class PerformanceViewModel(private val app: PocketForgeApp) : ViewModel() {
                 ggufPreview = gguf?.let { m ->
                     "arch=${m.architecture}, quant=${m.quantName()}, tensors=${m.tensors.size}"
                 },
-                contextStateBytes = if (info != null) engine.contextStateSizeBytes() else null,
+                contextStateBytes = contextState,
                 nativeHeapAllocated = android.os.Debug.getNativeHeapAllocatedSize(),
                 lowMemory = device.isLowMemory,
                 thermal = device.thermalStatus,

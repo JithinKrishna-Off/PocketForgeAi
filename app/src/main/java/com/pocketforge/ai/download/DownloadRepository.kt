@@ -63,7 +63,8 @@ object DownloadRegistry {
     }
 }
 
-/** Metadata for a resumable download, persisted next to the partial file. */
+/** Metadata for a resumable download, persisted next to the partial file.
+ *  Hub downloads add provenance (repo/revision/displayName/author); catalogue downloads leave them empty. */
 data class DownloadMarker(
     val modelId: String,
     val url: String,
@@ -71,6 +72,10 @@ data class DownloadMarker(
     val totalBytes: Long,
     val sha256: String? = null,
     val supportsRange: Boolean? = null,
+    val repo: String = "",
+    val revision: String = "",
+    val displayName: String = "",
+    val author: String = "",
 ) {
     companion object {
         fun file(downloadsDir: File, modelId: String) = File(downloadsDir, "$modelId.download.json")
@@ -85,6 +90,10 @@ data class DownloadMarker(
                     .put("totalBytes", marker.totalBytes)
                     .put("sha256", marker.sha256 ?: JSONObject.NULL)
                     .put("supportsRange", JSONObject.NULL.takeIf { marker.supportsRange == null } ?: marker.supportsRange)
+                    .put("repo", marker.repo)
+                    .put("revision", marker.revision)
+                    .put("displayName", marker.displayName)
+                    .put("author", marker.author)
                     .toString(2)
             )
         }
@@ -106,6 +115,10 @@ data class DownloadMarker(
                         is Boolean -> range
                         else -> range.toString().toBooleanStrictOrNull()
                     },
+                    repo = o.optString("repo", ""),
+                    revision = o.optString("revision", ""),
+                    displayName = o.optString("displayName", ""),
+                    author = o.optString("author", ""),
                 )
             } catch (_: Exception) {
                 null

@@ -3,12 +3,69 @@
 **A private, on-device AI assistant for Android. Local inference (llama.cpp + Vulkan), encrypted chat storage, panic wipe — nothing ever leaves the phone.**
 
 <p align="center">
+  <a href="#whats-new-in-v020">What's New</a> ·
   <a href="#privacy--security">Privacy</a> ·
   <a href="#models">Models</a> ·
   <a href="#building">Building</a> ·
   <a href="#apk">APK</a> ·
   <a href="#architecture">Architecture</a>
 </p>
+
+---
+
+## 🚀 What's New in v0.2.0
+
+> 📦 **Release:** `PocketForgeAI-v0.2.0-arm64-v8a.apk` (versionCode 2) — 30.3 MB, arm64-v8a only
+> 🔏 **SHA-256:** `29d3f4ec59b091f096ca9a43edb58113213128310d4273e68597297fced1e6ae`
+> 🧪 **Verified:** Kotlin + native builds, packaged-lib inspection — on-device behaviour pending hardware testing
+
+### 🧠 Neuron steering (Qwen3.5 dense models)
+
+Activation steering compiled into the llama.cpp core: at generation time the
+app amplifies or suppresses specific "refusal-direction" neurons inside the
+MLP down-projection of chosen transformer layers, to remove refusals and
+boost instruction-following without touching model weights.
+
+- ⚙️ **Spec format** `L:N:dir[:dose][,...]` — e.g. the default `14:8949:+1,13:7956:-1` (layer:neuron:direction, dose optional, auto = scaled by the neuron's output norm)
+- 🎯 **Targets:** layer 14 neuron 8949 (amplified) + layer 13 neuron 7956 (suppressed) — the default is tuned for abliterated Qwen3.5-4B/9B
+- 🔍 **Per-model compatibility check** before load: architecture (`qwen35` dense only), trunk layer range and per-neuron tensor dims verified against the GGUF header — MoE and other architectures are flagged unsupported
+- 🕹️ **UI:** Settings card ("Neuron steering") with a global switch + editable spec, plus a per-model steering switch in the Models load dialog
+- 📡 **Runtime status:** the Performance/plan surface reports whether steering is active and which spec was applied (e.g. `steer=14:8949:+1,13:7956:-1` in the load log)
+- ♻️ **Reload to apply:** changing the spec requires a model reload; the KV cache is never persisted, so state can't leak between loads
+- ⚠️ **Behavioural effect unverified:** compatibility is verified statically; A/B effect testing on hardware is still pending
+
+### 🌐 Model Hub (live Hugging Face search)
+
+A fifth tab that searches Hugging Face directly and downloads GGUF models —
+no more waiting for catalogue updates:
+
+- 🔎 **Debounced live search** of the HF Hub (400 ms, GGUF-tagged repos, load-more pagination)
+- 📄 **Expandable repo detail:** license, GGUF architecture, context length, per-file size + SHA-256, direct repo link
+- 🧠 **Steering-aware badges:** each GGUF file is pre-checked against the steering spec and labelled supported / unsupported / unknown
+- 🛡️ **Safety rails:** repo-ID validation, gated/private repos filtered out, multi-part shards excluded, HTTPS + revision-pinned download URLs, downloads only on explicit taps (no auto-fetch)
+- 🔁 **Reuses the hardened download pipeline:** resume, SHA-256 verification against `lfs.oid`, storage pre-checks (file + 5% + 256 MiB headroom), foreground notification, cancel/retry — and installs into the same registry as catalogue models
+
+### ⚡ Performance & engine work
+
+- 🚀 **CPU-variant pinning + lazy Vulkan dlopen** (landed with v0.2.0 builds): 0.9 → **12.3 tok/s** decode on the reference device (Snapdragon 8 Elite-class, 4B Q4_K_M) — the app no longer pays Vulkan-probe costs when running CPU-only
+- 🧵 **Thread fallback fix:** auto thread count now matches the native rule (`min(6, cores-2)`)
+- 🧮 **O(1) token accumulation:** per-token string concatenation replaced with a StringBuilder (was quadratic over long replies)
+- 💾 **Performance tab lightened:** 1 Hz tick no longer re-parses GGUF headers, re-reads `/proc` or blocks the engine lane on the main thread (cached per loaded model, device facts every 5 s, loop moved off the main thread)
+- 🗜️ **Chat I/O off the main thread:** conversation saves and the periodic decrypt-refresh no longer run on Main during generation
+- 🧹 **Optimized native libs:** llama.cpp rebuilt for `arm64-v8a` with **KleidiAI** kernels (armv8.0 → armv9.2+SME, 7 variants), **static OpenMP** (zero `libomp.so` dependency), GGML backend DL loading, release optimizations
+- 🐞 **Critical JNI fix:** `pfSetPlan` null-contract corrected (a latent bug that would have failed every model load)
+
+### ⚠️ Known limitations (this release)
+
+- 🔬 On-device behaviour (steering effect, Hub downloads, decode tps) is **not yet hardware-verified** — static checks + API verification only
+- 🎛️ Steering covers **qwen35 dense** models only (MoE/CLEF excluded by design); draft/MTP decoding is not steered
+- 🖥️ Vulkan remains built but off by default (lazy-load probe first); desktop Vulkan builds blocked on missing SPIRV-Headers in the build env
+- 📡 Hub pagination uses limit-growth + dedup (HF `offset` param is not honored); `lfs.oid` treated as SHA-256 (verified for sampled files)
+
+### 📚 Full release notes
+
+- 📋 Ship-readiness audit: [`docs/android-steering-performance-ship-audit.md`](docs/android-steering-performance-ship-audit.md)
+- 🛠️ Implementation report (agents, build matrix, verification): [`docs/android-steering-performance-implementation.md`](docs/android-steering-performance-implementation.md)
 
 ---
 
@@ -21,11 +78,13 @@ Cloud AI assistants permanently log your conversations. PocketForge runs the mod
 ## Features
 
 - **100% local inference** — llama.cpp compiled for `arm64-v8a`, running on **Vulkan** with CPU fallback.
+- **Neuron steering** 🧠 — per-model activation steering for abliterated Qwen3.5 (spec-validated before load; see [What's New](#whats-new-in-v020)).
 - **Encrypted chat storage** — every conversation is AES-256-GCM encrypted (`PFC1` file format: magic + 12-byte IV + GCM body) with a per-install file key wrapped by an Android Keystore alias (`pf_chat_key_v1`, StrongBox → TEE → software fallback).
 - **Panic wipe** — hold-to-confirm button in Settings that: stops generation, unloads the model, **deletes the Keystore key first** (instant crypto-erase of everything), then removes chat files, persona blobs, wrapped key and chat-related settings, then restarts to first-run state. Optional extras: also delete model files, add a launcher shortcut.
 - **Legacy migration** — older plaintext chats are re-encrypted automatically on first startup, with checksum verification before plaintext deletion.
 - **Recovery, not corruption** — if the key and the stored blob ever disagree (failed restore, key corruption), the app flags the chat store as *unreadable* and shows a reset dialog. It never silently overwrites data.
 - **Model catalogue with pinned revisions** — every featured model is pinned to a specific git revision SHA and verified by SHA-256, so you always get exactly the weights tested here.
+- **Model Hub** 🌐 — search Hugging Face live and download any GGUF through the verified, resumable download pipeline (see [What's New](#whats-new-in-v020)).
 - **Memory panel** — the Performance tab shows self/process memory in BASIC mode, and system-wide detail via Shizuku (FULL mode).
 - **Screenshot protection** — `FLAG_SECURE` on the chat window by default (blocks screenshots and the recents thumbnail), toggleable in Settings.
 - **No cloud backup** — `allowBackup=false` plus `dataExtractionRules` excludes chats, key material and model files from cloud backups, device transfer and D2D restore.
@@ -76,11 +135,23 @@ git submodule update --init --recursive    # pulls third_party/llama.cpp
 
 ## APK
 
-Pre-built debug APK (v2, versionCode 2): **`artifacts/PocketForgeAI-debug.apk`** — install directly:
+Pre-built debug APK, v0.2.0 (versionCode 2), arm64-v8a: **`artifacts/PocketForgeAI-v0.2.0-arm64-v8a.apk`** — install directly:
 
 ```powershell
-adb install -r -t artifacts\PocketForgeAI-debug.apk
+adb install -r -t artifacts\PocketForgeAI-v0.2.0-arm64-v8a.apk
 ```
+
+| 📦 Artifact | 📏 Size | 🔏 SHA-256 |
+|---|---|---|
+| `PocketForgeAI-v0.2.0-arm64-v8a.apk` | 30,270,773 B | `29d3f4ec59b091f096ca9a43edb58113213128310d4273e68597297fced1e6ae` |
+
+Verify before install:
+
+```powershell
+Get-FileHash artifacts\PocketForgeAI-v0.2.0-arm64-v8a.apk -Algorithm SHA256
+```
+
+(Also mirrored locally under `releases/` with its `.sha256` sidecar; `artifacts/` is the git-tracked copy.)
 
 ## Architecture
 
@@ -97,9 +168,11 @@ app/src/main/java/com/pocketforge/ai/
   │   └── PersonaStore.kt        — encrypted persona store
   ├── data/
   │   ├── catalogue/CatalogRepository.kt   — pinned model catalogue
+  │   ├── hub/HfCatalogService.kt          — live Hugging Face search + GGUF file listing (v0.2.0)
+  │   ├── steering/SteeringCompatibility.kt — shared steering spec validation + GGUF assessment (v0.2.0)
   │   ├── gguf/                  — GGUF parser + memory estimator
   │   └── memory/                — performance self/system memory (Shizuku FULL mode)
-  └── ui/screens/                — Chat, Models, Performance, Settings (incl. PrivacyCard)
+  └── ui/screens/                — Chat, Models, Hub, Performance, Settings (incl. PrivacyCard)
 ```
 
 - Inference: `app/src/main/cpp/pf_llm.cpp` (JNI bridge → llama.cpp), backend init at `lib/arm64`, Vulkan on Mali-G720-class devices.

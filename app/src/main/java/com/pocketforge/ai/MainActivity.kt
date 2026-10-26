@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.Icon
@@ -25,6 +26,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.pocketforge.ai.ui.screens.ChatScreen
+import com.pocketforge.ai.ui.screens.HubScreen
 import com.pocketforge.ai.ui.screens.ModelsScreen
 import com.pocketforge.ai.ui.screens.PerformanceScreen
 import com.pocketforge.ai.ui.screens.SettingsScreen
@@ -49,6 +51,7 @@ private fun AppRoot() {
     val items = listOf(
         NavItem("chat", "Chat"),
         NavItem("models", "Models"),
+        NavItem("hub", "Hub"),
         NavItem("performance", "Performance"),
         NavItem("settings", "Settings"),
     )
@@ -84,6 +87,7 @@ private fun AppRoot() {
                                 imageVector = when (item.route) {
                                     "chat" -> Icons.AutoMirrored.Filled.Send
                                     "models" -> Icons.Filled.Home
+                                    "hub" -> Icons.Filled.Search
                                     "performance" -> Icons.Filled.Star
                                     else -> Icons.Filled.Settings
                                 },
@@ -103,6 +107,7 @@ private fun AppRoot() {
         ) {
             composable("chat") { ChatScreen() }
             composable("models") { ModelsScreen() }
+            composable("hub") { HubScreen() }
             composable("performance") { PerformanceScreen() }
             composable("settings") { SettingsScreen() }
         }

@@ -23,6 +23,7 @@
 #include <atomic>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <deque>
 #include <functional>
@@ -59,6 +60,9 @@ static llama_pos                  g_system_position = 0;
 static llama_pos                  g_current_position = 0;
 static llama_pos                  g_stop_position = 0;
 static std::string                g_cached_token_chars;
+// steering spec registered into the resident model at load time ("" = none);
+// steering columns live on the llama_model instance, so this is status only.
+static std::string                g_steer_spec_applied;
 
 static std::atomic<bool>          g_cancel_flag{false};
 
@@ -218,6 +222,15 @@ static bool pf_try_backend(const std::string & lib_dir, const char * name, const
     return false;
 }
 
+static std::string g_pf_lib_dir;
+static bool g_pf_vulkan_loaded = false;
+
+static void pf_ensure_vulkan_loaded() {
+    if (g_pf_vulkan_loaded || g_pf_lib_dir.empty()) { return; }
+    // Vulkan first so GPU devices exist before any model load.
+    g_pf_vulkan_loaded = pf_try_backend(g_pf_lib_dir, "libggml-vulkan.so", "vulkan backend");
+}
+
 static void pf_load_backends(const char * lib_dir) {
     pf_backend_diag.clear();
     pf_backend_diag.push_back(std::string("lib dir: ") + (lib_dir ? lib_dir : "(null)"));
@@ -228,10 +241,12 @@ static void pf_load_backends(const char * lib_dir) {
         return;
     }
     const std::string lib_dir_s = lib_dir;
+    g_pf_lib_dir = lib_dir_s;
 
-    // Vulkan first so GPU devices exist before any model load.
-    pf_try_backend(lib_dir_s, "libggml-vulkan.so", "vulkan backend");
-
+    // GPU-offload disabled by default: libggml-vulkan.so is only dlopened lazily
+    // (from loadModel) when the plan's gpuLayers requests GPU offload. With the
+    // toggle off, the Vulkan device never registers, so the model weights can
+    // not be silently placed into a Vulkan_Host buffer.
     for (const char * name : PF_CPU_VARIANTS) {
         if (pf_try_backend(lib_dir_s, name, ("cpu variant " + std::string(name)).c_str())) {
             g_pf_chosen_cpu_variant = name;
@@ -335,7 +350,18 @@ static enum ggml_type pf_kv_type_from_str(const std::string & s) {
 
 // C ABI for the plan layer (JNI wrappers below are thin shells over these).
 static std::string pf_engine_current_plan_json_impl() {
-    return pf::plan_and_facts_json(g_pf_plan, pf_collect_device_facts());
+    // Steering status: appliedSpec is the spec registered into the resident
+    // model ("" = steering off); the requested spec for the NEXT load is
+    // currentPlan.steer.spec.
+    std::string json = pf::plan_and_facts_json(g_pf_plan, pf_collect_device_facts());
+    const size_t tail = json.rfind('}');
+    if (tail != std::string::npos) {
+        std::ostringstream steer;
+        steer << ",\"steer\":{\"active\":" << (g_steer_spec_applied.empty() ? "false" : "true")
+              << ",\"appliedSpec\":\"" << g_steer_spec_applied << "\"}";
+        json.insert(tail, steer.str());
+    }
+    return json;
 }
 
 // Returns "" on success, error text otherwise. Structural knobs (kv types,
@@ -396,24 +422,85 @@ Java_com_pocketforge_ai_inference_LlamaBridge_loadModel(
         return env->NewStringUTF("Context length out of supported range");
     }
 
-    if (n_gpu_layers > 0 && ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_GPU) == nullptr
-        && ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_IGPU) == nullptr) {
-        return env->NewStringUTF("GPU offload requested but no GPU backend device is registered in this build");
+    const int effective_ngl = g_pf_plan.nGpuLayers != -2 ? g_pf_plan.nGpuLayers : n_gpu_layers;
+
+    if (effective_ngl > 0) {
+        // GPU-offload toggle on: make sure the GPU backend is registered before
+        // the model loader starts assigning bm buffers (deferred dlopen).
+        pf_ensure_vulkan_loaded();
+        if ( ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_GPU) == nullptr
+            && ggml_backend_dev_by_type(GGML_BACKEND_DEVICE_TYPE_IGPU) == nullptr) {
+            return env->NewStringUTF("GPU offload requested but no GPU backend device is registered in this build");
+        }
     }
 
     llama_model_params model_params = llama_model_default_params();
-    model_params.n_gpu_layers = g_pf_plan.nGpuLayers != -2 ? g_pf_plan.nGpuLayers : n_gpu_layers;
+    model_params.n_gpu_layers = effective_ngl;
+    if (effective_ngl == 0) {
+        // No GPU layers: explicitly strip every GPU device from the candidate
+        // list (equivalent of llama-bench -dev none). Otherwise a registered
+        // Vulkan device still stays in the split scheduler and forces weights
+        // into a Vulkan_Host buffer with a cross-backend graph split, which
+        // measured 15x slower than pure CPU on the D9300+ / Mali-G720.
+        // The array must outlive the model load call.
+        static ggml_backend_dev_t pf_cpu_only_devices[1] = { nullptr };
+        model_params.devices = pf_cpu_only_devices;
+    }
     if (g_pf_plan.loadMode != "auto" && g_pf_plan.loadMode != "mmap") {
         const enum llama_load_mode lm = llama_load_mode_from_str(g_pf_plan.loadMode.c_str());
         if (lm != LLAMA_LOAD_MODE_AUTO && lm != LLAMA_LOAD_MODE_MMAP) { model_params.load_mode = lm; }
     }
 
+    {
+        // effective plan log: devices, gpu_layers, threads, n_ctx, n_batch,
+        // n_ubatch, flash_attn, type_k/v, use_mmap, use_mlock + build flags.
+        std::ostringstream dev_names;
+        if (effective_ngl == 0) {
+            dev_names << "none";
+        } else {
+            bool first = true;
+            for (size_t i = 0; i < ggml_backend_reg_count(); ++i) {
+                auto * reg = ggml_backend_reg_get(i);
+                for (size_t d = 0; d < ggml_backend_reg_dev_count(reg); ++d) {
+                    auto * dev = ggml_backend_reg_dev_get(reg, d);
+                    const auto type = ggml_backend_dev_type(dev);
+                    if (type != GGML_BACKEND_DEVICE_TYPE_GPU && type != GGML_BACKEND_DEVICE_TYPE_IGPU) { continue; }
+                    if (!first) { dev_names << ","; }
+                    dev_names << ggml_backend_dev_name(dev);
+                    first = false;
+                }
+            }
+            if (first) { dev_names << "none (auto, no GPU device registered)"; }
+        }
+        LOGi("PF effective plan: devices=[%s] gpu_layers=%d threads=%d n_ctx=%d n_batch=%d n_ubatch=%d flash_attn=%s type_k=%s type_v=%s load_mode=%d",
+             dev_names.str().c_str(), effective_ngl,
+             (g_pf_plan.nThreads > 0 ? g_pf_plan.nThreads : (n_threads > 0 ? n_threads : 0)),
+             (int) n_ctx,
+             (int) (g_pf_plan.nBatch > 0 ? g_pf_plan.nBatch : batch_size),
+             (int) (g_pf_plan.nUbatch > 0 ? g_pf_plan.nUbatch : (g_pf_plan.nBatch > 0 ? g_pf_plan.nBatch : batch_size)),
+             g_pf_plan.flashAttn.c_str(), g_pf_plan.kvTypeK.c_str(), g_pf_plan.kvTypeV.c_str(),
+             (int) model_params.load_mode);
+        LOGi("llama_print_system_info: %s", llama_print_system_info());
+    }
+
     const auto * model_path = env->GetStringUTFChars(jmodel_path, nullptr);
     LOGi("Loading model (ctx=%d, threads=%d, gpu_layers=%d, batch=%d)",
          (int) n_ctx, (int) n_threads, (int) n_gpu_layers, (int) batch_size);
+    // Qwen3.5 neuron steering is read from the environment once inside the
+    // model load (qwen35 load_steering). Wrap the load call so the env var is
+    // visible only to this load: state lands on the llama_model instance and
+    // the next load starts clean regardless of the spec here.
+    if (g_pf_plan.steerSpec.empty()) {
+        unsetenv("LLAMA_QWEN35_STEER");
+    } else {
+        setenv("LLAMA_QWEN35_STEER", g_pf_plan.steerSpec.c_str(), 1);
+        LOGi("Steering spec requested: %s", g_pf_plan.steerSpec.c_str());
+    }
     auto * model = llama_model_load_from_file(model_path, model_params);
+    unsetenv("LLAMA_QWEN35_STEER");
     env->ReleaseStringUTFChars(jmodel_path, model_path);
     if (!model) {
+        g_steer_spec_applied.clear();
         std::ostringstream error;
         if (ggml_backend_reg_count() == 0) {
             error << "No inference backend is registered; backend load report:\n";
@@ -427,6 +514,7 @@ Java_com_pocketforge_ai_inference_LlamaBridge_loadModel(
         return env->NewStringUTF(error.str().c_str());
     }
     g_model = model;
+    g_steer_spec_applied = g_pf_plan.steerSpec;
     g_vocab = llama_model_get_vocab(model);
 
     llama_context_params ctx_params = llama_context_default_params();
@@ -460,6 +548,7 @@ Java_com_pocketforge_ai_inference_LlamaBridge_loadModel(
         llama_model_free(model);
         g_model = nullptr;
         g_vocab = nullptr;
+        g_steer_spec_applied.clear();
         return env->NewStringUTF("Failed to create inference context (likely out of memory for KV cache)");
     }
     g_context = context;
@@ -471,10 +560,11 @@ Java_com_pocketforge_ai_inference_LlamaBridge_loadModel(
     reset_chat_msgs();
     reset_long_term_states(false);
     g_cancel_flag.store(false);
-    LOGi("Model ready: ctx=%d batch=%d ubatch=%d threads=%d batch_threads=%d kv=%s/%s fa=%s",
+    LOGi("Model ready: ctx=%d batch=%d ubatch=%d threads=%d batch_threads=%d kv=%s/%s fa=%s steer=%s",
          (int) llama_n_ctx(context), (int) ctx_params.n_batch, (int) ctx_params.n_ubatch,
          (int) decode_threads, (int) batch_threads,
-         g_pf_plan.kvTypeK.c_str(), g_pf_plan.kvTypeV.c_str(), g_pf_plan.flashAttn.c_str());
+         g_pf_plan.kvTypeK.c_str(), g_pf_plan.kvTypeV.c_str(), g_pf_plan.flashAttn.c_str(),
+         (g_steer_spec_applied.empty() ? "off" : g_steer_spec_applied.c_str()));
     return nullptr;
 }
 
@@ -489,6 +579,7 @@ Java_com_pocketforge_ai_inference_LlamaBridge_unloadModel(JNIEnv * /*env*/, jobj
     g_context = nullptr;
     g_model = nullptr;
     g_vocab = nullptr;
+    g_steer_spec_applied.clear();
     reset_chat_msgs();
     reset_long_term_states(false);
     g_batch = common_batch();

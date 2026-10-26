@@ -1,0 +1,13 @@
+10-23 15:55:23.152 10982 11010 I PFLlamaJNI: load_backend: loaded Vulkan backend from /data/app/~~dK_rykBfZeEkMC-_UwTV2A==/com.pocketforge.ai--3D7DkC2jaTzVuwZfsjcEQ==/lib/arm64/libggml-vulkan.so
+10-23 15:55:23.153 10982 11010 I PFLlamaJNI: load_backend: backend /data/app/~~dK_rykBfZeEkMC-_UwTV2A==/com.pocketforge.ai--3D7DkC2jaTzVuwZfsjcEQ==/lib/arm64/libggml-cpu-android_armv9.2_2.so is not supported on this system
+10-23 15:55:23.154 10982 11010 I PFLlamaJNI: load_backend: backend libggml-cpu-android_armv9.2_2.so is not supported on this system
+10-23 15:55:23.155 10982 11010 I PFLlamaJNI: load_backend: backend /data/app/~~dK_rykBfZeEkMC-_UwTV2A==/com.pocketforge.ai--3D7DkC2jaTzVuwZfsjcEQ==/lib/arm64/libggml-cpu-android_armv9.2_1.so is not supported on this system
+10-23 15:55:23.155 10982 11010 I PFLlamaJNI: load_backend: backend libggml-cpu-android_armv9.2_1.so is not supported on this system
+10-23 15:55:23.156 10982 11010 I PFLlamaJNI: load_backend: backend /data/app/~~dK_rykBfZeEkMC-_UwTV2A==/com.pocketforge.ai--3D7DkC2jaTzVuwZfsjcEQ==/lib/arm64/libggml-cpu-android_armv9.0_1.so is not supported on this system
+10-23 15:55:23.157 10982 11010 I PFLlamaJNI: load_backend: backend libggml-cpu-android_armv9.0_1.so is not supported on this system
+10-23 15:55:23.158 10982 11010 I PFLlamaJNI: load_backend: loaded CPU backend from /data/app/~~dK_rykBfZeEkMC-_UwTV2A==/com.pocketforge.ai--3D7DkC2jaTzVuwZfsjcEQ==/lib/arm64/libggml-cpu-android_armv8.6_1.so
+10-23 15:55:23.159 10982 11010 I PFLlamaJNI: Registered backends: Vulkan,CPU
+10-23 15:55:28.011 10982 11047 I PFLlamaJNI: Loading model (ctx=2048, threads=6, gpu_layers=0, batch=512)
+10-23 15:55:29.036 10982 11047 I PFLlamaJNI: load_tensors: offloading 0 repeating layers to GPU
+10-23 15:55:29.036 10982 11047 I PFLlamaJNI: load_tensors: offloaded 0/37 layers to GPU
+10-23 16:00:20.768 10982 11043 I PFLlamaJNI: sched_graph_realloc: graph reallocation: nodes = 1487 (changed = 0), splits = 73, n_same = 1, n_diff = 0
