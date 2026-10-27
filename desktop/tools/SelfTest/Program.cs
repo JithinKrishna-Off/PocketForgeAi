@@ -29,6 +29,12 @@ internal static class Program
             Result.SkipLine("PartB", "no MockPhone.exe; run: dotnet build tools/MockPhone/MockPhone.csproj");
         await PartC.Run();
 
+        // PartD covers the /v1/spec/* turbo-mode contract against MockPhone
+        if (resolvedExe is not null)
+            await PartD.Run(resolvedExe, basePort + 1400);
+        else
+            Result.SkipLine("PartD", "no MockPhone.exe; run: dotnet build tools/MockPhone/MockPhone.csproj");
+
         Console.WriteLine();
         Console.WriteLine($"== Summary: {Result.Pass} passed, {Result.Fail} failed, {Result.Skip} skipped ==");
         return Result.Fail > 255 ? 255 : Result.Fail;

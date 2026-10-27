@@ -34,28 +34,45 @@ public static class AgentLoopHost
     public static async IAsyncEnumerable<UiLoopEvent> RunAsync(
         string userMessage, PocketForgeDesktop.IModelClient model, [EnumeratorCancellation] CancellationToken ct)
     {
-        var loop = new ToolLoop(new PhoneMcpModelClient(model), GetMcpTools(), approval: null, maxIterations: 5);
-        await foreach (var ev in loop.RunAsync(userMessage, systemPrompt: null, ct).ConfigureAwait(false))
+        // each agent task gets a fresh phone session (bounds KV growth) and its
+        // turns jump the phone turn queue
+        if (model is PhoneChatClient pcc)
         {
-            switch (ev.Kind)
+            pcc.AgentMode = true;
+            pcc.NextTurnResetsSession = true;
+        }
+        try
+        {
+            var loop = new ToolLoop(new PhoneMcpModelClient(model), GetMcpTools(), approval: null, maxIterations: 5);
+            await foreach (var ev in loop.RunAsync(userMessage, systemPrompt: null, ct).ConfigureAwait(false))
             {
-                case LoopEventKind.AssistantDelta:
-                    yield return new UiLoopEvent("delta", ev.Delta ?? "", null);
-                    break;
-                case LoopEventKind.ToolRequested:
-                    yield return new UiLoopEvent("tool", ev.ToolName ?? "?", ev.ToolArgs);
-                    break;
-                case LoopEventKind.ToolResult:
-                    yield return new UiLoopEvent("result", ev.ToolName ?? "?", ev.Ok ? ev.Result : "[failed] " + (ev.Result ?? ""));
-                    break;
-                case LoopEventKind.Denied:
-                    yield return new UiLoopEvent("denied", ev.ToolName ?? "", ev.Error);
-                    break;
-                case LoopEventKind.Error:
-                    yield return new UiLoopEvent("error", ev.Error ?? "tool loop error", null);
-                    break;
-                case LoopEventKind.Done:
-                    break;
+                switch (ev.Kind)
+                {
+                    case LoopEventKind.AssistantDelta:
+                        yield return new UiLoopEvent("delta", ev.Delta ?? "", null);
+                        break;
+                    case LoopEventKind.ToolRequested:
+                        yield return new UiLoopEvent("tool", ev.ToolName ?? "?", ev.ToolArgs);
+                        break;
+                    case LoopEventKind.ToolResult:
+                        yield return new UiLoopEvent("result", ev.ToolName ?? "?", ev.Ok ? ev.Result : "[failed] " + (ev.Result ?? ""));
+                        break;
+                    case LoopEventKind.Denied:
+                        yield return new UiLoopEvent("denied", ev.ToolName ?? "", ev.Error);
+                        break;
+                    case LoopEventKind.Error:
+                        yield return new UiLoopEvent("error", ev.Error ?? "tool loop error", null);
+                        break;
+                    case LoopEventKind.Done:
+                        break;
+                }
+            }
+        }
+        finally
+        {
+            if (model is PhoneChatClient doneClient)
+            {
+                doneClient.AgentMode = false;
             }
         }
     }

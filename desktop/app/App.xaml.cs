@@ -9,7 +9,7 @@ public partial class App : Application
 {
     protected override void OnStartup(StartupEventArgs e)
     {
-        Resources.MergedDictionaries.Add(BuildTheme(IsSystemLightTheme()));
+        Resources.MergedDictionaries.Add(BuildTheme(ResolveLight(TokenStore.Load().Theme)));
 
         // Last-resort guard: unhandled exceptions must not crash the app
         // silently; surface them and keep the UI alive.
@@ -21,6 +21,41 @@ public partial class App : Application
         };
 
         base.OnStartup(e);
+    }
+
+    protected override void OnExit(ExitEventArgs e)
+    {
+        try
+        {
+            // kill the draft llama-server child process, if any
+            TurboService.Shared?.Shutdown();
+        }
+        catch (Exception)
+        {
+        }
+        base.OnExit(e);
+    }
+
+    // Live theme switch; mode is "system" | "dark" | "light".
+    public static void ApplyTheme(string mode)
+    {
+        var app = Current;
+        var d = BuildTheme(ResolveLight(mode));
+        if (app.Resources.MergedDictionaries.Count > 0)
+        {
+            app.Resources.MergedDictionaries[0] = d;
+        }
+        else
+        {
+            app.Resources.MergedDictionaries.Add(d);
+        }
+    }
+
+    private static bool ResolveLight(string? mode)
+    {
+        if (mode == "dark") return false;
+        if (mode == "light") return true;
+        return IsSystemLightTheme();
     }
 
     private static bool IsSystemLightTheme()

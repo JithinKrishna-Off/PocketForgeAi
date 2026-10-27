@@ -60,6 +60,20 @@ static llama_pos                  g_system_position = 0;
 static llama_pos                  g_current_position = 0;
 static llama_pos                  g_stop_position = 0;
 static std::string                g_cached_token_chars;
+// raw system prompt text, kept so a full context can be re-primed after the
+// chat history is dropped (bounded restart for non-shiftable memories)
+static std::string                g_system_text;
+// turbo (speculative verification) turn state: the desktop drives the loop,
+// the phone only verifies drafted tokens greedily against the big model.
+// Sampling params do not apply in turbo mode (raw-logit argmax).
+static bool                       g_spec_active = false;
+static int                        g_spec_committed = 0;
+static int                        g_spec_max_new = 0;
+static int                        g_spec_prompt_tokens = 0;
+static llama_token                g_spec_next_token = -1;
+// batch index of the logits entry from the last llama_process call (used to
+// read the target's greedy pick right after prefill)
+static int32_t                    g_last_logits_index = -1;
 // steering spec registered into the resident model at load time ("" = none);
 // steering columns live on the llama_model instance, so this is status only.
 static std::string                g_steer_spec_applied;
@@ -605,6 +619,11 @@ Java_com_pocketforge_ai_inference_LlamaBridge_setSampler(JNIEnv *env, jobject /*
 extern "C"
 JNIEXPORT void JNICALL
 Java_com_pocketforge_ai_inference_LlamaBridge_resetSession(JNIEnv * /*env*/, jobject /*unused*/) {
+    // a turbo turn owns the context positions; end it before resetting
+    g_spec_active = false;
+    g_spec_committed = 0;
+    g_spec_max_new = 0;
+    g_spec_next_token = -1;
     reset_long_term_states(true);
     reset_chat_msgs();
     g_cached_token_chars.clear();
@@ -655,35 +674,79 @@ static int decode_tokens_in_batches(
             LOGe("llama_process failed with %d", rc);
             return 1;
         }
+        if (compute_last_logit && i + cur_batch_size >= (int) tokens.size()) {
+            g_last_logits_index = cur_batch_size - 1;
+        }
     }
     return 0;
+}
+
+// Tokenizes and prefills the retained system prompt at position 0. Callers must
+// have cleared the KV / recurrent state and the chat message list.
+static int prime_system_prompt() {
+    const bool has_chat_template = g_chat_templates && common_chat_templates_was_explicit(g_chat_templates.get());
+    std::string formatted = g_system_text;
+    if (has_chat_template) {
+        formatted = chat_append("system", g_system_text);
+    }
+    const auto tokens = common_tokenize(g_context, formatted, has_chat_template, has_chat_template);
+    if ((int) tokens.size() + OVERFLOW_HEADROOM >= g_n_ctx) {
+        LOGe("System prompt too long for context: %d tokens vs ctx %d", (int) tokens.size(), g_n_ctx);
+        return 1;
+    }
+    if (int rc = decode_tokens_in_batches(g_context, g_batch, tokens, 0, false)) {
+        return rc;
+    }
+    g_system_position = g_current_position = (int) tokens.size();
+    return 0;
+}
+
+// Make room for an incoming user turn of n_tokens. Preference: leave the KV
+// as-is, then a KV shift (dense memories), then a bounded restart that drops
+// the history and re-primes the system prompt. The restart is the only
+// state-consistent option for hybrid memories like qwen35, whose recurrent
+// DeltaNet state cannot rewind mid-history (research/distributed/09-kv-economics.md).
+// Returns 0 when g_current_position has room, 1 after a restart, 2 on failure.
+static int ensure_room_for_user_turn(int n_tokens) {
+    const int max_fit = g_n_ctx - OVERFLOW_HEADROOM;
+    if (g_current_position + n_tokens <= max_fit) {
+        return 0;
+    }
+    llama_memory_t mem = llama_get_memory(g_context);
+    const int n_discard = (g_current_position - g_system_position) / 2;
+    if (n_discard > 0
+            && llama_memory_seq_rm(mem, 0, g_system_position, g_system_position + n_discard)) {
+        llama_memory_seq_add(mem, 0, g_system_position + n_discard, g_current_position, -n_discard);
+        g_current_position -= n_discard;
+        LOGi("Context shift: discarded %d tokens", n_discard);
+        if (g_current_position + n_tokens <= max_fit) {
+            return 0;
+        }
+    }
+    if (g_system_position > 0 && g_system_position + n_tokens <= max_fit) {
+        LOGw("Context full; dropping chat history and re-priming the system prompt");
+        llama_memory_seq_rm(mem, 0, -1, -1);
+        reset_long_term_states(true);
+        reset_chat_msgs();
+        if (prime_system_prompt() != 0) {
+            return 2;
+        }
+        return g_current_position + n_tokens <= max_fit ? 1 : 2;
+    }
+    return 2;
 }
 
 extern "C"
 JNIEXPORT jint JNICALL
 Java_com_pocketforge_ai_inference_LlamaBridge_processSystemPrompt(JNIEnv *env, jobject /*unused*/, jstring jsystem_prompt) {
     if (!g_model || !g_context) { return 3; }
+    if (g_spec_active) { LOGw("turbo turn active; refusing system prompt"); return 3; }
+    const auto * system_prompt = env->GetStringUTFChars(jsystem_prompt, nullptr);
+    g_system_text = system_prompt;
+    env->ReleaseStringUTFChars(jsystem_prompt, system_prompt);
     reset_long_term_states(true);
     reset_chat_msgs();
-
-    const auto * system_prompt = env->GetStringUTFChars(jsystem_prompt, nullptr);
-    std::string formatted(system_prompt);
-    const bool has_chat_template = g_chat_templates && common_chat_templates_was_explicit(g_chat_templates.get());
-    if (has_chat_template) {
-        formatted = chat_append("system", system_prompt);
-    }
-    env->ReleaseStringUTFChars(jsystem_prompt, system_prompt);
-
-    const auto tokens = common_tokenize(g_context, formatted, has_chat_template, has_chat_template);
-    if ((int) tokens.size() + OVERFLOW_HEADROOM >= g_n_ctx) {
-        LOGe("System prompt too long for context: %d tokens vs ctx %d", (int) tokens.size(), g_n_ctx);
-        return 1;
-    }
-    if (int rc = decode_tokens_in_batches(g_context, g_batch, tokens, g_current_position, false)) {
-        return rc;
-    }
-    g_system_position = g_current_position = (int) tokens.size();
-    return 0;
+    return prime_system_prompt();
 }
 
 extern "C"
@@ -691,16 +754,16 @@ JNIEXPORT jint JNICALL
 Java_com_pocketforge_ai_inference_LlamaBridge_processUserPrompt(JNIEnv *env, jobject /*unused*/,
         jstring juser_prompt, jint n_predict) {
     if (!g_model || !g_context) { return 3; }
+    if (g_spec_active) { LOGw("turbo turn active; refusing normal prompt"); return 3; }
     g_cached_token_chars.clear();
     llama_perf_context_reset(g_context);
 
+    const bool has_chat_template = g_chat_templates && common_chat_templates_was_explicit(g_chat_templates.get());
     const auto * user_prompt = env->GetStringUTFChars(juser_prompt, nullptr);
     std::string formatted(user_prompt);
-    const bool has_chat_template = g_chat_templates && common_chat_templates_was_explicit(g_chat_templates.get());
     if (has_chat_template) {
         formatted = chat_append("user", user_prompt);
     }
-    env->ReleaseStringUTFChars(juser_prompt, user_prompt);
 
     auto user_tokens = common_tokenize(g_context, formatted, has_chat_template, has_chat_template);
     const int user_size = (int) user_tokens.size();
@@ -709,6 +772,24 @@ Java_com_pocketforge_ai_inference_LlamaBridge_processUserPrompt(JNIEnv *env, job
         user_tokens.resize(max_fit);
         LOGe("Prompt too long: %d tokens exceed context %d; truncating", user_size, g_n_ctx);
     }
+    const int room = ensure_room_for_user_turn((int) user_tokens.size());
+    if (room == 1) {
+        // history was dropped; the message list now holds only the system
+        // prompt, so append this turn again for the template render
+        if (has_chat_template) {
+            formatted = chat_append("user", user_prompt);
+        }
+        user_tokens = common_tokenize(g_context, formatted, has_chat_template, has_chat_template);
+        if ((int) user_tokens.size() > max_fit) {
+            user_tokens.resize(max_fit);
+        }
+    } else if (room == 2) {
+        env->ReleaseStringUTFChars(juser_prompt, user_prompt);
+        LOGe("No room for user prompt in context (need %d tokens, fit %d)", user_size, max_fit);
+        return 2;
+    }
+    env->ReleaseStringUTFChars(juser_prompt, user_prompt);
+
     if (int rc = decode_tokens_in_batches(g_context, g_batch, user_tokens, g_current_position, true)) {
         return rc;
     }
@@ -718,6 +799,202 @@ Java_com_pocketforge_ai_inference_LlamaBridge_processUserPrompt(JNIEnv *env, job
         g_stop_position = g_n_ctx - OVERFLOW_HEADROOM;
     }
     return 0;
+}
+
+// ---- turbo: distributed speculative verification ---------------------------
+// The desktop drafts K candidate tokens on a small PC-side model; the phone
+// verifies them greedily against the big model. Sampling params do not apply.
+
+static llama_token spec_argmax_at(int32_t batch_index) {
+    const float * logits = llama_get_logits_ith(g_context, batch_index);
+    if (!logits) { return -1; }
+    const int32_t n = llama_vocab_n_tokens(g_vocab);
+    llama_token best = 0;
+    float best_val = logits[0];
+    for (int32_t t = 1; t < n; t++) {
+        if (logits[t] > best_val) { best_val = logits[t]; best = t; }
+    }
+    return best;
+}
+
+static std::string spec_token_piece(llama_token id) {
+    return common_token_to_piece(g_context, id);
+}
+
+// Fixed probe string tokenized by both ends: the phone (target vocab) reports
+// the ids here, the desktop tokenizes the same string with the draft model and
+// compares. Equal ids give real tokenizer compatibility, not just a size match.
+static const char * kSpecTokenizerProbe =
+    "The quick brown fox jumps over the lazy dog. PocketForge tokenizer probe 12345.";
+
+extern "C"
+JNIEXPORT jstring JNICALL
+Java_com_pocketforge_ai_inference_LlamaBridge_specCapabilities(JNIEnv *env, jobject /*unused*/) {
+    if (!g_model || !g_vocab || !g_context) { return nullptr; }
+    std::ostringstream o;
+    o << "{\"spec_verify\":true,\"n_vocab\":" << llama_vocab_n_tokens(g_vocab)
+      << ",\"greedy_only\":true,\"probe\":\"";
+    auto toks = common_tokenize(g_context, kSpecTokenizerProbe, false, true);
+    for (size_t i = 0; i < toks.size(); i++) {
+        if (i) { o << ","; }
+        o << toks[i];
+    }
+    o << "\"}";
+    return env->NewStringUTF(o.str().c_str());
+}
+
+extern "C"
+JNIEXPORT jstring JNICALL
+Java_com_pocketforge_ai_inference_LlamaBridge_specTurn(JNIEnv *env, jobject /*unused*/,
+        jstring jsystem_prompt, jstring juser_prompt, jint max_tokens) {
+    // systemPrompt is applied engine-side (ensureSystemPrompt) before this call
+    (void) jsystem_prompt;
+    if (!g_model || !g_context || !g_vocab) { return nullptr; }
+    if (g_spec_active) { return nullptr; }
+    const int n_predict = max_tokens > 0 ? max_tokens : 512;
+    const jint rc = Java_com_pocketforge_ai_inference_LlamaBridge_processUserPrompt(env, nullptr, juser_prompt, n_predict);
+    if (rc != 0) {
+        LOGe("spec turn: prompt processing failed rc=%d", (int) rc);
+        return nullptr;
+    }
+    g_spec_next_token = spec_argmax_at(g_last_logits_index);
+    if (g_spec_next_token < 0) { return nullptr; }
+    g_spec_active = true;
+    g_spec_committed = 0;
+    g_spec_max_new = n_predict;
+    g_spec_prompt_tokens = g_current_position;
+    std::ostringstream o;
+    o << "{\"ok\":true,\"next_token\":" << g_spec_next_token
+      << ",\"committed\":0,\"max_new\":" << g_spec_max_new << "}";
+    return env->NewStringUTF(o.str().c_str());
+}
+
+extern "C"
+JNIEXPORT jstring JNICALL
+Java_com_pocketforge_ai_inference_LlamaBridge_specVerify(JNIEnv *env, jobject /*unused*/, jintArray jtokens) {
+    if (!g_context || !g_vocab || !g_spec_active) { return nullptr; }
+    if (g_cancel_flag.load()) {
+        g_cancel_flag.store(false);
+        std::ostringstream o;
+        o << "{\"accepted\":0,\"text\":\"\",\"next_token\":-1,\"committed\":" << g_spec_committed
+          << ",\"done\":true,\"finish_reason\":\"cancelled\"}";
+        return env->NewStringUTF(o.str().c_str());
+    }
+    const jsize n_draft = env->GetArrayLength(jtokens);
+    jint * toks = env->GetIntArrayElements(jtokens, nullptr);
+    if (!toks) { return nullptr; }
+
+    // budget: the max_new cap and room for one more bonus decode
+    int eff = n_draft;
+    if (g_spec_committed + eff > g_spec_max_new) { eff = g_spec_max_new - g_spec_committed; }
+    while (eff > 0 && g_current_position + eff + 1 > g_n_ctx - OVERFLOW_HEADROOM) { eff--; }
+    if (eff <= 0) {
+        env->ReleaseIntArrayElements(jtokens, toks, JNI_ABORT);
+        std::ostringstream o;
+        o << "{\"accepted\":0,\"text\":\"\",\"next_token\":-1,\"committed\":" << g_spec_committed
+          << ",\"done\":true,\"finish_reason\":\"length\"}";
+        return env->NewStringUTF(o.str().c_str());
+    }
+
+    // process the pending greedy token plus the drafted candidates, logits on
+    // every entry so the acceptance chain can be read per position
+    g_batch.clear();
+    const llama_pos base_pos = g_current_position;
+    const llama_token pending = g_spec_next_token;
+    g_batch.add(pending, base_pos, 0, true);
+    for (int i = 0; i < eff; i++) {
+        g_batch.add(toks[i], base_pos + 1 + i, 0, true);
+    }
+    if (llama_process(g_context, LLAMA_PROCESS_TYPE_DECODE, g_batch.get()) != 0) {
+        env->ReleaseIntArrayElements(jtokens, toks, JNI_ABORT);
+        LOGe("spec verify: decode failed");
+        return nullptr;
+    }
+
+    // entry 0 is the pending token; entry i+1 is drafted token toks[i]. The
+    // target's pick after entry i is accepted iff it equals the next proposal.
+    int accepted = 0;
+    while (accepted < eff && spec_argmax_at(accepted) == toks[accepted]) { accepted++; }
+    llama_token bonus = spec_argmax_at(accepted);
+    if (bonus < 0) {
+        env->ReleaseIntArrayElements(jtokens, toks, JNI_ABORT);
+        return nullptr;
+    }
+
+    bool done = false;
+    const char * finish = nullptr;
+    if (llama_vocab_is_eog(g_vocab, bonus)) {
+        done = true;
+        finish = "stop";
+    }
+    for (int i = 0; !done && i < accepted; i++) {
+        if (llama_vocab_is_eog(g_vocab, toks[i])) { done = true; finish = "stop"; }
+    }
+
+    // trim to the max_new cap: the pending token counts as committed too
+    int commit = 1 + accepted;
+    if (g_spec_committed + commit > g_spec_max_new) {
+        commit = g_spec_max_new - g_spec_committed;
+        accepted = commit > 0 ? commit - 1 : 0;
+        if (!done) { done = true; finish = "length"; }
+        bonus = spec_argmax_at(accepted);
+    }
+    if (!done && g_spec_committed + commit >= g_spec_max_new) {
+        done = true;
+        finish = "length";
+    }
+
+    // roll back the rejected tail so KV and hybrid state stay consistent
+    llama_memory_t mem = llama_get_memory(g_context);
+    llama_memory_seq_rm(mem, 0, base_pos + accepted + 1, -1);
+    g_current_position = base_pos + accepted + 1;
+    g_spec_committed += commit;
+    g_spec_next_token = done ? -1 : bonus;
+
+    std::string text;
+    text += spec_token_piece(pending);
+    for (int i = 0; i < accepted; i++) {
+        text += spec_token_piece(toks[i]);
+    }
+
+    std::ostringstream o;
+    o << "{\"accepted\":" << accepted << ",\"text\":\"" << json_escape(text) << "\""
+      << ",\"next_token\":" << (done ? -1 : (int) bonus)
+      << ",\"committed\":" << g_spec_committed
+      << ",\"done\":" << (done ? "true" : "false")
+      << ",\"finish_reason\":" << (finish ? (std::string("\"") + finish + "\"") : std::string("null"))
+      << "}";
+    env->ReleaseIntArrayElements(jtokens, toks, JNI_ABORT);
+    return env->NewStringUTF(o.str().c_str());
+}
+
+extern "C"
+JNIEXPORT jstring JNICALL
+Java_com_pocketforge_ai_inference_LlamaBridge_specFinish(JNIEnv *env, jobject /*unused*/, jstring jtext) {
+    const int committed = g_spec_committed;
+    const int prompt = g_spec_prompt_tokens;
+    double gen_ms = 0;
+    if (g_context) {
+        const auto perf = llama_perf_context(g_context);
+        gen_ms = perf.t_eval_ms;
+    }
+    g_spec_active = false;
+    g_spec_committed = 0;
+    g_spec_max_new = 0;
+    g_spec_next_token = -1;
+    if (!g_model) { return nullptr; }
+    if (jtext != nullptr) {
+        const auto * text_chars = env->GetStringUTFChars(jtext, nullptr);
+        if (text_chars) {
+            chat_append("assistant", text_chars);
+            env->ReleaseStringUTFChars(jtext, text_chars);
+        }
+    }
+    std::ostringstream o;
+    o << "{\"ok\":true,\"prompt_tokens\":" << prompt
+      << ",\"completion_tokens\":" << committed
+      << ",\"gen_ms\":" << (int) gen_ms << "}";
+    return env->NewStringUTF(o.str().c_str());
 }
 
 extern "C"
@@ -736,15 +1013,21 @@ extern "C"
 JNIEXPORT jstring JNICALL
 Java_com_pocketforge_ai_inference_LlamaBridge_generateNextToken(JNIEnv *env, jobject /*unused*/) {
     if (!g_model || !g_context || !g_sampler) { return nullptr; }
+    if (g_spec_active) { return nullptr; }
 
     if (g_current_position >= g_n_ctx - OVERFLOW_HEADROOM) {
-        // shift half the KV cache (between system prompt and current position) to make room
+        // shift half the KV cache (between system prompt and current position) to
+        // make room; the erase must succeed or the recurrent state desyncs from
+        // the KV positions (hybrid memories refuse mid-history erases)
         const int n_discard = (g_current_position - g_system_position) / 2;
-        if (n_discard > 0) {
-            llama_memory_seq_rm(llama_get_memory(g_context), 0, g_system_position, g_system_position + n_discard);
-            llama_memory_seq_add(llama_get_memory(g_context), 0, g_system_position + n_discard, g_current_position, -n_discard);
+        llama_memory_t mem = llama_get_memory(g_context);
+        if (n_discard > 0 && llama_memory_seq_rm(mem, 0, g_system_position, g_system_position + n_discard)) {
+            llama_memory_seq_add(mem, 0, g_system_position + n_discard, g_current_position, -n_discard);
             g_current_position -= n_discard;
             LOGi("Context shift: discarded %d tokens", n_discard);
+        } else {
+            LOGw("Context exhausted; ending generation (memory cannot shift)");
+            return nullptr;
         }
     }
 

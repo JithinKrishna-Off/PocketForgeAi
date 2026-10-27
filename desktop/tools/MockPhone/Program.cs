@@ -7,6 +7,8 @@
 //   MOCK_FAIL=big    POST /v1/chat/completions -> 413
 //   MOCK_FAIL=error  POST /v1/chat/completions -> 500 error JSON
 //   MOCK_DELAY_MS=N  delay between SSE tokens (slow-token mode for cancel tests)
+//   MOCK_NO_SPEC=1   /v1/spec/* -> 404 (simulates an older phone build without spec support)
+//   MOCK_SPEC_REJECT=1  /v1/spec/verify accepts 0 tokens every round (rejection path)
 
 using System.Collections.Concurrent;
 using System.Net;
@@ -56,10 +58,17 @@ internal sealed class MockServer
     // one generation at a time across the whole mock, as per contract
     private CancellationTokenSource? _genCts;
 
+    // speculative decoding session, reset by every /v1/spec/turn
+    private int _specMaxNew;
+    private int _specCommitted;
+    private int _specNextToken;
+
     private static bool FailAuth => Environment.GetEnvironmentVariable("MOCK_FAIL") == "auth";
     private static bool FailBig => Environment.GetEnvironmentVariable("MOCK_FAIL") == "big";
     private static bool FailError => Environment.GetEnvironmentVariable("MOCK_FAIL") == "error";
     private static bool ForcedBusy => Environment.GetEnvironmentVariable("MOCK_BUSY") == "1";
+    private static bool NoSpec => Environment.GetEnvironmentVariable("MOCK_NO_SPEC") == "1";
+    private static bool SpecReject => Environment.GetEnvironmentVariable("MOCK_SPEC_REJECT") == "1";
     private static int TokenDelayMs =>
         int.TryParse(Environment.GetEnvironmentVariable("MOCK_DELAY_MS"), out int d) ? d : 0;
 
@@ -144,6 +153,20 @@ internal sealed class MockServer
                     await WriteJsonAsync(stream, 204, null, ct);
                     return;
             }
+
+            if (path.StartsWith("/v1/spec/"))
+            {
+                // older phone build: the endpoints do not exist at all, not 405 nor a busy error
+                if (NoSpec) { await WriteJsonErrorAsync(stream, 404, "not found", ct); return; }
+
+                switch (method + " " + path)
+                {
+                    case "GET /v1/spec/capabilities": await HandleSpecCapabilitiesAsync(stream, ct); return;
+                    case "POST /v1/spec/turn": await HandleSpecTurnAsync(stream, req.BodyText(), ct); return;
+                    case "POST /v1/spec/verify": await HandleSpecVerifyAsync(stream, req.BodyText(), ct); return;
+                    case "POST /v1/spec/finish": await HandleSpecFinishAsync(stream, req.BodyText(), ct); return;
+                }
+            }
         }
 
         await WriteJsonErrorAsync(stream, 404, "not found", ct);
@@ -211,12 +234,128 @@ internal sealed class MockServer
             $"{{\"api\":\"v1\",\"server\":true,\"port\":{_port},\"lan\":false," +
             $"\"state\":\"{(generating ? "Generating" : "ModelReady")}\",\"busy\":{(busy ? "true" : "false")}," +
             $"\"model\":{{\"loaded\":true,\"name\":\"{ModelName}\",\"desc\":\"mock model\",\"sizeBytes\":2700000000," +
-            $"\"nCtx\":8192,\"nThreads\":6,\"backend\":\"cpu\"," +
-            $"\"steering\":{{\"active\":false,\"spec\":\"\"}}}}}}";
+            $"\"nCtx\":8192,\"nThreads\":6,\"backend\":\"cpu\"}}}}";
         await WriteJsonAsync(stream, 200, json, ct);
     }
 
     private static string JsonBool(bool b) => b ? "true" : "false";
+
+    private async Task<bool> SpecBusyAsync(Stream stream, CancellationToken ct)
+    {
+        // same busy contract as chat: one generation at a time across the whole mock
+        if (ForcedBusy || _genCts is not null)
+        {
+            await WriteJsonErrorAsync(stream, 409, "busy", ct);
+            return true;
+        }
+        return false;
+    }
+
+    private async Task HandleSpecCapabilitiesAsync(Stream stream, CancellationToken ct)
+    {
+        await WriteJsonAsync(stream, 200, "{\"spec_verify\":true,\"n_vocab\":151936,\"greedy_only\":true}", ct);
+    }
+
+    private async Task HandleSpecTurnAsync(Stream stream, string bodyText, CancellationToken ct)
+    {
+        if (await SpecBusyAsync(stream, ct)) return;
+
+        string user;
+        int maxTokens;
+        {
+            JsonDocument doc;
+            try { doc = JsonDocument.Parse(bodyText); }
+            catch (JsonException) { await WriteJsonErrorAsync(stream, 400, "malformed request", ct); return; }
+            using (doc)
+            {
+                var root = doc.RootElement;
+                if (root.ValueKind != JsonValueKind.Object ||
+                    !root.TryGetProperty("user", out var u) || u.ValueKind != JsonValueKind.String ||
+                    string.IsNullOrWhiteSpace(u.GetString()))
+                {
+                    await WriteJsonErrorAsync(stream, 400, "malformed request", ct);
+                    return;
+                }
+                user = u.GetString() ?? "";
+
+                // tolerant on max_tokens like the chat handler is on stream; missing means no limit
+                maxTokens = root.TryGetProperty("max_tokens", out var mt) && mt.ValueKind == JsonValueKind.Number
+                    ? mt.GetInt32()
+                    : 0;
+            }
+        }
+
+        _specMaxNew = maxTokens;
+        _specCommitted = 0;
+        _specNextToken = 1;
+        await WriteJsonAsync(stream, 200,
+            $"{{\"ok\":true,\"next_token\":{_specNextToken},\"committed\":0,\"max_new\":{maxTokens}}}", ct);
+    }
+
+    private async Task HandleSpecVerifyAsync(Stream stream, string bodyText, CancellationToken ct)
+    {
+        if (await SpecBusyAsync(stream, ct)) return;
+
+        List<int> tokens;
+        {
+            JsonDocument doc;
+            try { doc = JsonDocument.Parse(bodyText); }
+            catch (JsonException) { await WriteJsonErrorAsync(stream, 400, "malformed request", ct); return; }
+            using (doc)
+            {
+                var root = doc.RootElement;
+                if (root.ValueKind != JsonValueKind.Object ||
+                    !root.TryGetProperty("tokens", out var ts) || ts.ValueKind != JsonValueKind.Array)
+                {
+                    await WriteJsonErrorAsync(stream, 400, "malformed request", ct);
+                    return;
+                }
+                tokens = new List<int>();
+                foreach (var t in ts.EnumerateArray())
+                    if (t.ValueKind == JsonValueKind.Number && t.TryGetInt32(out int v))
+                        tokens.Add(v);
+            }
+        }
+
+        int remaining = Math.Max(0, _specMaxNew - _specCommitted);
+        int accepted = SpecReject ? 0 : Math.Min(tokens.Count, remaining);
+        string text = string.Join("|", tokens.Take(accepted));
+        int committed = _specCommitted + accepted;
+        bool done = committed >= _specMaxNew;
+
+        _specCommitted = committed;
+        int nextToken = _specNextToken++;
+
+        await WriteJsonAsync(stream, 200,
+            $"{{\"accepted\":{accepted},\"text\":{JsonString(text)},\"next_token\":{nextToken}," +
+            $"\"committed\":{committed},\"done\":{JsonBool(done)}," +
+            $"\"finish_reason\":{(done ? "\"length\"" : "null")}}}", ct);
+    }
+
+    private async Task HandleSpecFinishAsync(Stream stream, string bodyText, CancellationToken ct)
+    {
+        if (await SpecBusyAsync(stream, ct)) return;
+
+        string text;
+        {
+            JsonDocument doc;
+            try { doc = JsonDocument.Parse(bodyText); }
+            catch (JsonException) { await WriteJsonErrorAsync(stream, 400, "malformed request", ct); return; }
+            using (doc)
+            {
+                text = doc.RootElement.ValueKind == JsonValueKind.Object &&
+                       doc.RootElement.TryGetProperty("text", out var t) && t.ValueKind == JsonValueKind.String
+                    ? t.GetString() ?? ""
+                    : "";
+            }
+        }
+
+        int promptTokens = Tokenize(text).Count();
+        int completionTokens = _specCommitted;
+        int genMs = TokenDelayMs * completionTokens;
+        await WriteJsonAsync(stream, 200,
+            $"{{\"ok\":true,\"prompt_tokens\":{promptTokens},\"completion_tokens\":{completionTokens},\"gen_ms\":{genMs}}}", ct);
+    }
 
     private void CancelGeneration()
     {

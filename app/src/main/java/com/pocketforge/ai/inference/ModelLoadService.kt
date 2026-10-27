@@ -114,7 +114,6 @@ class ModelLoadService(private val app: PocketForgeApp) {
         contextLength: Int? = null,
         gpuLayers: Int? = null,
         threads: Int? = null,
-        steerEnabled: Boolean? = null,
     ): Result {
         val preload = withContext(Dispatchers.IO) {
             val installed = try {
@@ -128,40 +127,9 @@ class ModelLoadService(private val app: PocketForgeApp) {
             }
 
             val settings = app.settingsStore.settings.first()
-            val useSteering = steerEnabled ?: settings.steerEnabled
-            val resolvedSteerSpec = if (useSteering) settings.steerSpec else ""
-
-            // Validate the spec grammar before touching the plan; the native layer
-            // also re-validates and fails the load on an invalid spec.
-            val steerErrors = com.pocketforge.ai.data.steering.SteeringCompatibility.validateSpec(resolvedSteerSpec)
-            if (steerErrors.isNotEmpty()) {
-                return@withContext PreloadResult.Failure(
-                    "Steering spec is invalid: " + steerErrors.joinToString("; "),
-                )
-            }
-
-            var steerUnknownNote: String? = null
-            if (resolvedSteerSpec.isNotBlank()) {
-                val assessment =
-                    com.pocketforge.ai.data.steering.SteeringCompatibility.assessGgufFile(file, resolvedSteerSpec)
-                when (assessment.techStatus) {
-                    com.pocketforge.ai.data.steering.SteeringTechStatus.UNSUPPORTED -> {
-                        return@withContext PreloadResult.Failure(
-                            "Steering is not supported for this model: " +
-                                (assessment.reasons.firstOrNull() ?: "unknown reason"),
-                        )
-                    }
-                    com.pocketforge.ai.data.steering.SteeringTechStatus.UNKNOWN -> {
-                        steerUnknownNote = assessment.reasons.firstOrNull()
-                    }
-                    com.pocketforge.ai.data.steering.SteeringTechStatus.SUPPORTED -> {}
-                }
-            }
 
             PreloadResult.Ready(
                 settings = settings,
-                steerSpec = resolvedSteerSpec,
-                steerUnknownNote = steerUnknownNote,
                 file = file,
             )
         }
@@ -170,8 +138,6 @@ class ModelLoadService(private val app: PocketForgeApp) {
             is PreloadResult.Ready -> p
         }
         val settings = ready.settings
-        val resolvedSteerSpec = ready.steerSpec
-        val steerUnknownNote = ready.steerUnknownNote
 
         // Wait until the native engine bootstrap finished (backends get loaded then).
         try {
@@ -213,29 +179,12 @@ class ModelLoadService(private val app: PocketForgeApp) {
                 temperature = settings.temperature,
                 topP = settings.topP,
                 topK = settings.topK,
-                steerSpec = resolvedSteerSpec,
             )
             val errors = config.validate()
             if (errors.isNotEmpty()) {
                 return@withContext SecondaryResult.Failure(errors.joinToString("; "))
             }
 
-            // Always publish the resolved spec into the active plan (empty string when
-            // disabled) so a stale spec from a previous load never carries over.
-            val planErr = try {
-                val root = JSONObject(LlamaBridge.pfPlansJson())
-                root.remove("facts")
-                val currentPlan = root.getJSONObject("currentPlan")
-                val steerObj = currentPlan.optJSONObject("steer")
-                    ?: JSONObject().also { currentPlan.put("steer", it) }
-                steerObj.put("spec", resolvedSteerSpec)
-                LlamaBridge.pfSetPlan(root.toString())
-            } catch (t: Throwable) {
-                "Failed to update the inference plan: ${t.message}"
-            }
-            if (planErr != null) {
-                return@withContext SecondaryResult.Failure(planErr)
-            }
             SecondaryResult.Plan(rec, config)
         }
         val planData = when (secondary) {
@@ -256,28 +205,20 @@ class ModelLoadService(private val app: PocketForgeApp) {
                 val plan = p.optJSONObject("currentPlan")
                 val typeK = plan?.optJSONObject("kv")?.optString("typeK")
                 val typeV = plan?.optJSONObject("kv")?.optString("typeV")
-                val steer = p.optJSONObject("steer")
-                val steerNote = if (steer != null && steer.optBoolean("active")) {
-                    "steer ${steer.optString("appliedSpec").ifBlank { "on" }}"
-                } else {
-                    null
-                }
                 listOfNotNull(
                     backend?.takeIf { it.isNotBlank() }?.let { "backend $it" },
                     typeK?.takeIf { it.isNotBlank() }?.let {
                         "kv $it" + (typeV?.takeIf { v -> v.isNotBlank() }?.let { v -> "/$v" } ?: "")
                     },
-                    steerNote,
                 ).joinToString(", ")
             } catch (_: Throwable) {
                 ""
             }
-            val unknown = steerUnknownNote?.let { " | steering unknown: $it" } ?: ""
             val where = rec.gpuDeviceName?.takeIf { rec.gpuLayers > 0 }?.let { " (GPU: $it)" } ?: " (CPU)"
             val planNote = if (planDesc.isNotBlank()) " [plan: $planDesc]" else ""
             Result.Loaded(
                 "Optimized load$where: ctx ${config.nCtx}, threads ${config.nThreads}$planNote" +
-                    " in ${(System.currentTimeMillis() - start) / 1000.0}s$unknown",
+                    " in ${(System.currentTimeMillis() - start) / 1000.0}s",
             )
         } catch (t: Throwable) {
             Result.Failure("Optimized load failed: ${t.message}")
@@ -289,13 +230,11 @@ class ModelLoadService(private val app: PocketForgeApp) {
         data class Failure(val message: String) : PreloadResult()
         data class Ready(
             val settings: com.pocketforge.ai.settings.Settings,
-            val steerSpec: String,
-            val steerUnknownNote: String?,
             val file: java.io.File,
         ) : PreloadResult()
     }
 
-    /** Device detect + plan publish done off the main thread. */
+    /** Device detect done off the main thread. */
     private sealed class SecondaryResult {
         data class Failure(val message: String) : SecondaryResult()
         data class Plan(val rec: DeviceOptimizer.Recommendation, val config: InferenceConfiguration) : SecondaryResult()

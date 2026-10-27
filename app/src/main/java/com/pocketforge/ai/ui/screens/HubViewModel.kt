@@ -9,9 +9,6 @@ import com.pocketforge.ai.data.hub.HfModelDetail
 import com.pocketforge.ai.data.hub.HfModelSummary
 import com.pocketforge.ai.data.hub.HfResult
 import com.pocketforge.ai.data.model.InstalledModel
-import com.pocketforge.ai.data.steering.SteeringAssessment
-import com.pocketforge.ai.data.steering.SteeringCompatibility
-import com.pocketforge.ai.data.steering.SteeringTechStatus
 import com.pocketforge.ai.download.DownloadInfo
 import com.pocketforge.ai.download.DownloadRegistry
 import java.util.concurrent.ConcurrentHashMap
@@ -27,7 +24,7 @@ import kotlinx.coroutines.withContext
 
 /**
  * One result row. Search fills id/author/counters; expanding the card merges HfModelDetail
- * (license, architecture, file list) and evaluates steering compatibility pre-download.
+ * (license, architecture, file list) pre-download.
  */
 data class HubModelUi(
     val id: String,
@@ -42,7 +39,6 @@ data class HubModelUi(
     val architecture: String? = null,
     val contextLength: Long? = null,
     val totalGgufBytes: Long? = null,
-    val steerStatus: SteeringAssessment? = null,
     val files: List<HfGgufFile> = emptyList(),
     val detailLoaded: Boolean = false,
 ) {
@@ -212,19 +208,9 @@ class HubViewModel(private val app: PocketForgeApp) : ViewModel() {
         architecture = detail.architecture,
         contextLength = detail.contextLength,
         totalGgufBytes = detail.totalGgufBytes,
-        steerStatus = steerFor(detail),
         files = detail.files,
         detailLoaded = true,
     )
-
-    // No name guessing: without gguf.architecture the result stays UNKNOWN.
-    private fun steerFor(detail: HfModelDetail): SteeringAssessment {
-        val arch = detail.architecture
-        if (arch.isNullOrEmpty()) {
-            return SteeringAssessment(SteeringTechStatus.UNKNOWN, listOf("architecture not reported by registry"))
-        }
-        return SteeringCompatibility.evaluate(arch, null, null, 14, 8949)
-    }
 
     fun startDownload(repoId: String, file: HfGgufFile? = null) {
         val detail = _state.value.expanded[repoId]

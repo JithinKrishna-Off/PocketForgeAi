@@ -59,9 +59,10 @@ struct PfPlan {
     std::string cpuVariant;         // "" = engine default order (most-capable first)
     int nThreads = -1;              // -1 = engine clamp
     int nThreadsBatch = -1;         // -1 = nThreads
-    // kv cache
-    std::string kvTypeK = "f16";    // "f16" | "q8_0" | "q4_0"
-    std::string kvTypeV = "f16";
+    // kv cache; q8_0 K+V is the default (halves KV RAM, ~+6-18% decode; see
+    // research/distributed/09-kv-economics.md). "f16" stays opt-out.
+    std::string kvTypeK = "q8_0";   // "f16" | "q8_0" | "q4_0"
+    std::string kvTypeV = "q8_0";
     std::string flashAttn = "auto"; // "auto" | "on" | "off"
     // batching
     int nBatch = -1;

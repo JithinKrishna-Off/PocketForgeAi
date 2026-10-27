@@ -13,7 +13,13 @@ public sealed class DesktopSettings
     public string? TokenProtected { get; set; }
     public string? LastConnected { get; set; }
     public bool AgentMode { get; set; }
+    public bool TurboEnabled { get; set; }
+    public string? DraftExePath { get; set; }
+    public string? DraftModelPath { get; set; }
+    public int DraftPort { get; set; } = 8755;
+    public int DraftK { get; set; } = 4;
     public List<string>? WorkspaceRoots { get; set; }
+    public string Theme { get; set; } = "system";
 }
 
 // Settings + DPAPI-protected pairing token at %APPDATA%\PocketForgeDesktop\settings.json.

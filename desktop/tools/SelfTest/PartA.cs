@@ -495,6 +495,8 @@ internal sealed class MockInstance : IAsyncDisposable
         psi.EnvironmentVariables.Remove("MOCK_FAIL");
         psi.EnvironmentVariables.Remove("MOCK_BUSY");
         psi.EnvironmentVariables.Remove("MOCK_DELAY_MS");
+        psi.EnvironmentVariables.Remove("MOCK_NO_SPEC");
+        psi.EnvironmentVariables.Remove("MOCK_SPEC_REJECT");
         if (_env is { } e2)
             psi.EnvironmentVariables[e2.key] = e2.val;
         _proc = Process.Start(psi) ?? throw new Exception("failed to start " + _exe);

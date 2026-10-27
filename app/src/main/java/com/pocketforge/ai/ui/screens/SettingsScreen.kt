@@ -50,14 +50,6 @@ fun SettingsScreen() {
         systemPromptText = state.settings.systemPrompt
     }
 
-    var steeringSpecText by remember { mutableStateOf(state.settings.steerSpec) }
-    LaunchedEffect(state.settings.steerSpec) {
-        steeringSpecText = state.settings.steerSpec
-    }
-    val steeringSpecErrors = remember(steeringSpecText) {
-        com.pocketforge.ai.data.steering.SteeringCompatibility.validateSpec(steeringSpecText)
-    }
-
     LazyColumn(
         Modifier.fillMaxSize(),
         contentPadding = androidx.compose.foundation.layout.PaddingValues(12.dp),
@@ -97,47 +89,6 @@ fun SettingsScreen() {
                     values = listOf(0, 2, 4, 6, 8),
                     display = { if (it == 0) "auto (up to 6)" else it.toString() },
                     onSelect = { vm.setThreads(it) },
-                )
-            } }
-        }
-
-        item {
-            Card { Column(Modifier.padding(14.dp)) {
-                Text("Neuron steering", style = MaterialTheme.typography.titleMedium)
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    androidx.compose.material3.Switch(
-                        checked = state.settings.steerEnabled,
-                        onCheckedChange = { vm.setSteeringEnabled(it) },
-                    )
-                    Text(
-                        "Enable neuron steering",
-                        modifier = Modifier.padding(start = 8.dp),
-                    )
-                }
-                if (state.settings.steerEnabled) {
-                    androidx.compose.material3.OutlinedTextField(
-                        value = steeringSpecText,
-                        onValueChange = { steeringSpecText = it },
-                        modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
-                        singleLine = true,
-                        label = { Text("Steering spec (L:N:dir[:dose], comma separated)") },
-                        supportingText = {
-                            if (steeringSpecErrors.isNotEmpty()) {
-                                steeringSpecErrors.forEach {
-                                    Text(it, color = MaterialTheme.colorScheme.error)
-                                }
-                            }
-                        },
-                    )
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                        TextButton(onClick = { vm.setSteerSpec(steeringSpecText) }) { Text("Apply") }
-                    }
-                }
-                Text(
-                    "qwen35 dense models only. Applied at model load; changing it requires reloading the model. " +
-                        "Behavioural effect is unverified (experimental).",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             } }
         }

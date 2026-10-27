@@ -17,6 +17,7 @@ public partial class MainWindow : Window
     private bool _connected;
     private bool _sending;
     private bool _resetPending;
+    private readonly TurboService _turbo = new();
 
     public ObservableCollection<ChatItem> Messages { get; } = new();
     public ObservableCollection<LoopLineItem> LoopItems { get; } = new();
@@ -30,8 +31,26 @@ public partial class MainWindow : Window
         HostBox.Text = _settings.Host;
         PortBox.Text = _settings.Port.ToString();
         AgentModeCheckBox.IsChecked = _settings.AgentMode;
+        TurboCheckBox.IsChecked = _settings.TurboEnabled; // fires Turbo_Changed
+        ThemeButton.Content = ThemeLabel(_settings.Theme);
         SetStatus("Disconnected", null);
     }
+
+    private void Theme_Click(object sender, RoutedEventArgs e)
+    {
+        var next = _settings.Theme switch { "system" => "dark", "dark" => "light", _ => "system" };
+        _settings.Theme = next;
+        TokenStore.Save(_settings);
+        App.ApplyTheme(next);
+        ThemeButton.Content = ThemeLabel(next);
+    }
+
+    private static string ThemeLabel(string? mode) => mode switch
+    {
+        "dark" => "Theme: Dark",
+        "light" => "Theme: Light",
+        _ => "Theme: Auto",
+    };
 
     private static Brush? DotBrush(string? key) =>
         key != null ? Application.Current.TryFindResource(key) as Brush : null;
@@ -162,6 +181,10 @@ public partial class MainWindow : Window
             ShowError("Unexpected: " + ex.Message);
             SetStatus("Error", "ErrorBrush");
         }
+        finally
+        {
+            SetBusyUi(false);
+        }
     }
 
     private void Disconnect_Click(object sender, RoutedEventArgs e)
@@ -224,12 +247,7 @@ public partial class MainWindow : Window
             modelText = (m.Name ?? "model") +
                 " | ctx " + m.NCtx +
                 " | threads " + m.NThreads +
-                " | backend " + (m.Backend ?? "-") +
-                " | steering " + (m.SteerActive ? "on" : "off");
-            if (!string.IsNullOrEmpty(m.SteerSpec))
-            {
-                modelText += " (" + m.SteerSpec + ")";
-            }
+                " | backend " + (m.Backend ?? "-");
         }
         else
         {
@@ -332,8 +350,32 @@ public partial class MainWindow : Window
 
     private async Task RunTurnAsync(ChatItem live, string text, bool reset, CancellationToken ct)
     {
+        // a failed turbo turn falls back to normal; a partially consumed
+        // phone-side turbo turn forces a fresh session for that rewrite
+        bool normalReset = reset;
         try
         {
+            if (TurboCheckBox.IsChecked == true && AgentModeCheckBox.IsChecked != true)
+            {
+                try
+                {
+                    await RunTurboTurnAsync(live, text, reset, ct);
+                    ShowError("");
+                    return;
+                }
+                catch (TurboFallbackException tf)
+                {
+                    if (tf.TurnStarted)
+                    {
+                        normalReset = true;
+                    }
+                    SetTurboStatus(tf.Kind == TurboFailureKind.Unavailable ? "unavailable" : "error", tf.Message);
+                    ShowError((tf.Kind == TurboFailureKind.Unavailable
+                        ? "Turbo unavailable: "
+                        : "Turbo error: ") + tf.Message + " - running this turn in normal mode.");
+                }
+            }
+
             if (AgentModeCheckBox.IsChecked == true)
             {
                 _client!.NextTurnResetsSession = reset;
@@ -352,7 +394,7 @@ public partial class MainWindow : Window
             else
             {
                 var messages = new ChatMessage[] { new("user", text) };
-                var options = new ChatOptions(Stream: true, MaxTokens: 2048, Stop: null, ResetSession: reset);
+                var options = new ChatOptions(Stream: true, MaxTokens: 2048, Stop: null, ResetSession: normalReset);
                 await foreach (var d in _client!.StreamChatAsync(messages, options, ct))
                 {
                     if (d.Content != null)
@@ -497,6 +539,109 @@ public partial class MainWindow : Window
     {
         _settings.AgentMode = AgentModeCheckBox.IsChecked == true;
         TokenStore.Save(_settings);
+    }
+
+    // ---- turbo (distributed speculative decoding) --------------------------
+
+    private void Turbo_Changed(object sender, RoutedEventArgs e)
+    {
+        _settings.TurboEnabled = TurboCheckBox.IsChecked == true;
+        TokenStore.Save(_settings);
+        SetTurboStatus(_settings.TurboEnabled ? "on" : "normal", null);
+        if (_settings.TurboEnabled)
+        {
+            _ = ValidateTurboNowAsync();
+        }
+    }
+
+    // Precheck as early as possible so a broken setup shows up before a turn;
+    // the first turbo turn re-runs the same checks.
+    private async Task ValidateTurboNowAsync()
+    {
+        if (_client == null || !_connected || _sending)
+        {
+            return; // validated lazily on the first turbo turn / at turn time
+        }
+        SetTurboStatus("starting", null);
+        try
+        {
+            await _turbo.WarmUpAsync(_client, TurboConfig.FromSettings(_settings), CancellationToken.None);
+            SetTurboStatus("ready", null);
+        }
+        catch (TurboFallbackException tf)
+        {
+            SetTurboStatus(tf.Kind == TurboFailureKind.Unavailable ? "unavailable" : "error", tf.Message);
+            ShowError((tf.Kind == TurboFailureKind.Unavailable
+                ? "Turbo unavailable: "
+                : "Turbo error: ") + tf.Message);
+        }
+        catch (Exception ex)
+        {
+            SetTurboStatus("error", ex.Message);
+            ShowError("Turbo check failed: " + ex.Message);
+        }
+    }
+
+    private async Task RunTurboTurnAsync(ChatItem live, string text, bool reset, CancellationToken ct)
+    {
+        SetTurboStatus("starting", null);
+        await _turbo.RunTurnAsync(
+            _client!,
+            TurboConfig.FromSettings(_settings),
+            new TurboTurnRequest(
+                User: text,
+                Conversation: BuildDraftConversation(reset, text),
+                System: null,
+                MaxTokens: 2048,
+                ResetSession: reset),
+            chunk => AppendToBubble(live, chunk),
+            ct);
+        SetTurboStatus("ready", null);
+    }
+
+    // Rendered conversation for the draft model: the full UI transcript unless
+    // the session restarts (then only the new user text); UI placeholders and
+    // the still-empty assistant bubble for this turn are excluded.
+    private List<ChatMessage> BuildDraftConversation(bool reset, string text)
+    {
+        var conversation = new List<ChatMessage>();
+        if (!reset)
+        {
+            for (int i = 0; i < Messages.Count - 1; i++)
+            {
+                ChatItem m = Messages[i];
+                if (m.Role != "user" && m.Role != "assistant")
+                {
+                    continue;
+                }
+                if (m.Role == "assistant" && m.Content.StartsWith("[new session:"))
+                {
+                    continue;
+                }
+                if (m.Content.Length == 0)
+                {
+                    continue;
+                }
+                conversation.Add(new ChatMessage(m.Role, m.Content));
+            }
+        }
+        conversation.Add(new ChatMessage("user", text));
+        return conversation;
+    }
+
+    private void SetTurboStatus(string kind, string? detail)
+    {
+        TurboStatusText.Text = kind switch
+        {
+            "normal" => "Turbo: off",
+            "on" => "Turbo: on",
+            "starting" => "Turbo: starting...",
+            "ready" => "Turbo: ready",
+            "unavailable" => "Turbo: unavailable",
+            "error" => "Turbo: error",
+            _ => "Turbo: " + kind,
+        };
+        TurboStatusText.ToolTip = detail;
     }
 
     private void ClearLoop_Click(object sender, RoutedEventArgs e) => LoopItems.Clear();

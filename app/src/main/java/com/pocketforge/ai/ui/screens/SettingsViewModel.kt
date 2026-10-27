@@ -94,8 +94,6 @@ class SettingsViewModel(private val app: PocketForgeApp) : ViewModel() {
     fun setThreads(v: Int) = viewModelScope.launch { app.settingsStore.setThreads(v) }
     fun setSafetyMarginMb(v: Int) = viewModelScope.launch { app.settingsStore.setSafetyMarginMb(v) }
     fun setSystemPrompt(v: String) = viewModelScope.launch { app.settingsStore.setSystemPrompt(v) }
-    fun setSteeringEnabled(v: Boolean) = viewModelScope.launch { app.settingsStore.setSteerEnabled(v) }
-    fun setSteerSpec(v: String) = viewModelScope.launch { app.settingsStore.setSteerSpec(v) }
 
     // ---- desktop server ----
     fun setServerEnabled(v: Boolean) {
