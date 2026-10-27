@@ -72,6 +72,13 @@ public sealed class TurboService
     // Must stay byte-identical to the phone-side probe (pf_llm.cpp kSpecTokenizerProbe).
     internal const string TokenizerProbe = "The quick brown fox jumps over the lazy dog. PocketForge tokenizer probe 12345.";
 
+    // Pulled automatically when models\draft.gguf is missing; same model the
+    // manifest describes (Qwen3.5-0.8B Q8_0, qwen35 tokenizer pre, 248320 vocab).
+    internal const string DraftModelUrl =
+        "https://huggingface.co/unsloth/Qwen3.5-0.8B-GGUF/resolve/main/Qwen3.5-0.8B-Q8_0.gguf";
+
+    private static readonly HttpClient DownloadHttp = new() { Timeout = Timeout.InfiniteTimeSpan };
+
     private static TurboService? _instance;
     public static TurboService? Shared => _instance;
 
@@ -90,9 +97,10 @@ public sealed class TurboService
     // Runs the prechecks (once per phone connection) and then one turn:
     // spec turn on the phone, then verify rounds driven by draft candidates.
     public async Task RunTurnAsync(
-        PhoneChatClient phone, TurboConfig cfg, TurboTurnRequest req, Action<string> onText, CancellationToken ct)
+        PhoneChatClient phone, TurboConfig cfg, TurboTurnRequest req, Action<string> onText,
+        CancellationToken ct, Action<string>? onStatus = null)
     {
-        await WarmUpAsync(phone, cfg, ct);
+        await WarmUpAsync(phone, cfg, ct, onStatus);
 
         bool turnStarted = false;
         try
@@ -118,6 +126,11 @@ public sealed class TurboService
                     new("assistant", generated.ToString()),
                 };
                 var (ids, _) = await _draft.DraftCandidatesAsync(draftMessages, k, ct);
+                if (ids.Length == 0)
+                {
+                    throw TurboFallbackException.Error(
+                        "draft produced no candidate tokens (empty generation)", turnStarted);
+                }
 
                 SpecVerify v = await phone.SpecVerifyAsync(ids, ct);
                 if (v.Text.Length > 0)
@@ -177,7 +190,8 @@ public sealed class TurboService
     // Validates the draft exe/model paths, starts or reuses the draft server,
     // checks the phone's spec support, and compares the draft manifest vocab.
     // Called when the toggle turns on and at the start of every turbo turn.
-    public async Task WarmUpAsync(PhoneChatClient? phone, TurboConfig cfg, CancellationToken ct)
+    public async Task WarmUpAsync(
+        PhoneChatClient? phone, TurboConfig cfg, CancellationToken ct, Action<string>? onStatus = null)
     {
         if (!File.Exists(cfg.DraftExePath))
         {
@@ -187,9 +201,8 @@ public sealed class TurboService
         }
         if (!File.Exists(cfg.DraftModelPath))
         {
-            throw TurboFallbackException.Unavailable(
-                "draft model not found at " + cfg.DraftModelPath +
-                ". Expected models\\draft.gguf next to the app folder, or set DraftModelPath in %APPDATA%\\PocketForgeDesktop\\settings.json");
+            onStatus?.Invoke("draft model missing; downloading...");
+            await DownloadDraftModelAsync(cfg.DraftModelPath, onStatus, ct);
         }
 
         if (!_draft.IsRunning || _draft.Port != cfg.DraftPort)
@@ -214,6 +227,95 @@ public sealed class TurboService
             await CheckTokenizerProbeAsync(caps, ct);
         }
         CheckManifest(cfg);
+    }
+
+    // Streams DraftModelUrl to targetPath. Progress is surfaced through
+    // onStatus (throttled); a partial file is cleaned up on failure.
+    private async Task DownloadDraftModelAsync(string targetPath, Action<string>? onStatus, CancellationToken ct)
+    {
+        string partial = targetPath + ".download";
+        try
+        {
+            using var resp = await DownloadHttp.GetAsync(
+                DraftModelUrl, HttpCompletionOption.ResponseHeadersRead, ct);
+            resp.EnsureSuccessStatusCode();
+            long total = resp.Content.Headers.ContentLength ?? -1;
+            var dir = Path.GetDirectoryName(targetPath);
+            if (!string.IsNullOrEmpty(dir))
+            {
+                Directory.CreateDirectory(dir);
+            }
+
+            long done = 0;
+            int lastPct = -1;
+            await using (var src = await resp.Content.ReadAsStreamAsync(ct))
+            await using (var dst = new FileStream(partial, FileMode.Create, FileAccess.Write, FileShare.None, 256 * 1024))
+            {
+                var buf = new byte[256 * 1024];
+                while (true)
+                {
+                    int n = await src.ReadAsync(buf, ct);
+                    if (n <= 0)
+                    {
+                        break;
+                    }
+                    await dst.WriteAsync(buf.AsMemory(0, n), ct);
+                    done += n;
+                    if (total > 0)
+                    {
+                        int pct = (int)(done * 100 / total);
+                        if (pct >= lastPct + 5)
+                        {
+                            lastPct = pct;
+                            onStatus?.Invoke("downloading draft model " + pct + "% (" + done / (1024 * 1024) + " MB)");
+                        }
+                    }
+                }
+            }
+
+            File.Move(partial, targetPath, overwrite: true);
+            WriteManifestIfMissing(targetPath, new FileInfo(targetPath).Length);
+            onStatus?.Invoke("draft model ready (" + new FileInfo(targetPath).Length / (1024 * 1024) + " MB)");
+        }
+        catch (OperationCanceledException)
+        {
+            TryDelete(partial);
+            throw;
+        }
+        catch (Exception ex)
+        {
+            TryDelete(partial);
+            throw TurboFallbackException.Unavailable("draft model download failed: " + ex.Message);
+        }
+    }
+
+    private static void TryDelete(string path)
+    {
+        try { if (File.Exists(path)) { File.Delete(path); } }
+        catch { /* best effort; the next warmup retries the download */ }
+    }
+
+    // Identity is known from the shipped manifest; write one only when absent
+    // so a downloaded model still passes the n_vocab compat check.
+    private static void WriteManifestIfMissing(string modelPath, long bytes)
+    {
+        string manifestPath = modelPath + ".manifest.json";
+        if (File.Exists(manifestPath))
+        {
+            return;
+        }
+        try
+        {
+            File.WriteAllText(manifestPath,
+                "{\"file\":\"" + Path.GetFileName(modelPath) + "\",\"n_vocab\":248320,\"arch\":\"qwen35\"," +
+                "\"name\":\"Qwen3.5-0.8B\",\"size_label\":\"773M\",\"quant\":\"Q8_0\"," +
+                "\"tokenizer_pre\":\"qwen35\",\"context_length\":262144,\"eos_token_id\":248046," +
+                "\"downloaded_from\":\"" + DraftModelUrl + "\",\"bytes\":" + bytes + "}");
+        }
+        catch (IOException)
+        {
+            // manifest is optional; the vocab is still checked at runtime
+        }
     }
 
     private async Task<SpecCapabilities> CheckPhoneCapabilitiesAsync(PhoneChatClient phone, CancellationToken ct)

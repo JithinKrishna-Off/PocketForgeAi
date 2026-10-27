@@ -58,6 +58,9 @@ static int32_t                    g_n_ctx = 2048;
 static int32_t                    g_n_batch = DEFAULT_BATCH_SIZE;
 static llama_pos                  g_system_position = 0;
 static llama_pos                  g_current_position = 0;
+// tokens at positions 0..g_current_position-1; lets spec verify rebuild the
+// whole sequence when the hybrid memory refuses a partial rollback
+static llama_tokens               g_session_tokens;
 static llama_pos                  g_stop_position = 0;
 static std::string                g_cached_token_chars;
 // raw system prompt text, kept so a full context can be re-primed after the
@@ -160,6 +163,7 @@ static void reset_long_term_states(const bool clear_kv = true) {
     g_system_position = 0;
     g_current_position = 0;
     g_stop_position = 0;
+    g_session_tokens.clear();
     g_cached_token_chars.clear();
 }
 
@@ -697,6 +701,7 @@ static int prime_system_prompt() {
     if (int rc = decode_tokens_in_batches(g_context, g_batch, tokens, 0, false)) {
         return rc;
     }
+    g_session_tokens = tokens;
     g_system_position = g_current_position = (int) tokens.size();
     return 0;
 }
@@ -717,6 +722,8 @@ static int ensure_room_for_user_turn(int n_tokens) {
     if (n_discard > 0
             && llama_memory_seq_rm(mem, 0, g_system_position, g_system_position + n_discard)) {
         llama_memory_seq_add(mem, 0, g_system_position + n_discard, g_current_position, -n_discard);
+        g_session_tokens.erase(g_session_tokens.begin() + g_system_position,
+                g_session_tokens.begin() + g_system_position + n_discard);
         g_current_position -= n_discard;
         LOGi("Context shift: discarded %d tokens", n_discard);
         if (g_current_position + n_tokens <= max_fit) {
@@ -793,6 +800,7 @@ Java_com_pocketforge_ai_inference_LlamaBridge_processUserPrompt(JNIEnv *env, job
     if (int rc = decode_tokens_in_batches(g_context, g_batch, user_tokens, g_current_position, true)) {
         return rc;
     }
+    g_session_tokens.insert(g_session_tokens.end(), user_tokens.begin(), user_tokens.end());
     g_current_position += (int) user_tokens.size();
     g_stop_position = g_current_position + n_predict;
     if (g_stop_position >= g_n_ctx) {
@@ -944,10 +952,25 @@ Java_com_pocketforge_ai_inference_LlamaBridge_specVerify(JNIEnv *env, jobject /*
         finish = "length";
     }
 
-    // roll back the rejected tail so KV and hybrid state stay consistent
+    // the verified prefix (pending plus accepted drafts) is the only valid
+    // tail; record it so a refused rollback can rebuild the sequence
+    g_session_tokens.push_back(pending);
+    for (int i = 0; i < accepted; i++) { g_session_tokens.push_back(toks[i]); }
+
+    // roll back the rejected tail so KV and hybrid state stay consistent.
+    // hybrid memories without recurrent snapshots refuse the erase; recover by
+    // clearing the memory and re-decoding the known-good token history
     llama_memory_t mem = llama_get_memory(g_context);
-    llama_memory_seq_rm(mem, 0, base_pos + accepted + 1, -1);
-    g_current_position = base_pos + accepted + 1;
+    if (!llama_memory_seq_rm(mem, 0, base_pos + accepted + 1, -1)) {
+        LOGw("spec verify: rollback refused, reprocessing %d tokens", (int) g_session_tokens.size());
+        llama_memory_seq_rm(mem, 0, -1, -1);
+        if (int rc = decode_tokens_in_batches(g_context, g_batch, g_session_tokens, 0, false)) {
+            env->ReleaseIntArrayElements(jtokens, toks, JNI_ABORT);
+            LOGe("spec verify: recovery reprocess failed rc=%d", rc);
+            return nullptr;
+        }
+    }
+    g_current_position = (int) g_session_tokens.size();
     g_spec_committed += commit;
     g_spec_next_token = done ? -1 : bonus;
 
@@ -1023,6 +1046,8 @@ Java_com_pocketforge_ai_inference_LlamaBridge_generateNextToken(JNIEnv *env, job
         llama_memory_t mem = llama_get_memory(g_context);
         if (n_discard > 0 && llama_memory_seq_rm(mem, 0, g_system_position, g_system_position + n_discard)) {
             llama_memory_seq_add(mem, 0, g_system_position + n_discard, g_current_position, -n_discard);
+            g_session_tokens.erase(g_session_tokens.begin() + g_system_position,
+                    g_session_tokens.begin() + g_system_position + n_discard);
             g_current_position -= n_discard;
             LOGi("Context shift: discarded %d tokens", n_discard);
         } else {
@@ -1048,6 +1073,7 @@ Java_com_pocketforge_ai_inference_LlamaBridge_generateNextToken(JNIEnv *env, job
         LOGe("decode failed for generated token");
         return nullptr;
     }
+    g_session_tokens.push_back(new_token_id);
     g_current_position++;
 
     if (llama_vocab_is_eog(g_vocab, new_token_id)) {
