@@ -1,5 +1,7 @@
 using System;
 using System.Collections.ObjectModel;
+using System.Diagnostics;
+using System.IO;
 using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
@@ -76,6 +78,52 @@ public partial class MainWindow : Window
 
     // ---- connection -------------------------------------------------------
 
+    // ---- adb tunnel -------------------------------------------------------
+
+    // Sets up "adb forward tcp:<port> tcp:<port>" so the desktop can reach the
+    // phone server over USB. Best-effort and bounded: silently skipped for
+    // Wi-Fi hosts, missing adb, or no connected device.
+    private static async Task EnsureAdbForwardAsync(string host, int port)
+    {
+        bool loopback = host == "127.0.0.1" || host == "localhost" || host == "::1";
+        if (!loopback)
+        {
+            return;
+        }
+        await Task.Run(() =>
+        {
+            string adb = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "Android", "Sdk", "platform-tools", "adb.exe");
+            if (!File.Exists(adb))
+            {
+                adb = "adb"; // fall back to PATH
+            }
+            try
+            {
+                using var p = Process.Start(new ProcessStartInfo
+                {
+                    FileName = adb,
+                    Arguments = "forward tcp:" + port + " tcp:" + port,
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                });
+                if (p == null)
+                {
+                    return;
+                }
+                if (!p.WaitForExit(5000))
+                {
+                    try { p.Kill(); } catch { }
+                }
+            }
+            catch
+            {
+                // no adb or no device: the direct (Wi-Fi) path still works
+            }
+        });
+    }
+
     private async void Connect_Click(object sender, RoutedEventArgs e)
     {
         try
@@ -118,6 +166,10 @@ public partial class MainWindow : Window
         SetBusyUi(false);
         ConnectButton.IsEnabled = false;
 
+        // USB: adb clears forwards on replug, so re-establish the loopback
+        // tunnel before probing; no-op for Wi-Fi hosts and missing adb.
+        await EnsureAdbForwardAsync(host, port);
+
         try
         {
             var health = await _client.ProbeAsync(host, port, CancellationToken.None);
@@ -127,7 +179,7 @@ public partial class MainWindow : Window
                 throw new PhoneApiException(
                     "No PocketForge server reachable at " + host + ":" + port +
                     ". Start the phone server (Settings -> Desktop server), then retry. " +
-                    "For USB use: adb reverse tcp:8751 tcp:8751.", 0);
+                    "USB needs adb (debug bridge) installed; Wi-Fi uses the phone's LAN IP.", 0);
             }
             if (string.IsNullOrEmpty(health.Api) || !health.Api.StartsWith("v1", StringComparison.OrdinalIgnoreCase))
             {
@@ -565,7 +617,9 @@ public partial class MainWindow : Window
         SetTurboStatus("starting", null);
         try
         {
-            await _turbo.WarmUpAsync(_client, TurboConfig.FromSettings(_settings), CancellationToken.None);
+            await _turbo.WarmUpAsync(
+                _client, TurboConfig.FromSettings(_settings), CancellationToken.None,
+                s => SetTurboStatus("starting", s));
             SetTurboStatus("ready", null);
         }
         catch (TurboFallbackException tf)
@@ -595,7 +649,8 @@ public partial class MainWindow : Window
                 MaxTokens: 2048,
                 ResetSession: reset),
             chunk => AppendToBubble(live, chunk),
-            ct);
+            ct,
+            s => SetTurboStatus("starting", s));
         SetTurboStatus("ready", null);
     }
 
