@@ -169,7 +169,7 @@ turbo turn runs (greedy-only by design).
   the listener. The model is NOT unloaded when a desktop client disconnects.
 - Android process death kills the server; the toggle comes back off (opt-in
   every boot). The listener rebinds on service start.
-- USB/ADB use: `adb reverse tcp:8751 tcp:8751` then desktop connects to
+- USB/ADB use: `adb forward tcp:8751 tcp:8751` then desktop connects to
   127.0.0.1:8751. Wi-Fi use: desktop connects to the phone's LAN IP.
 
 ## Tool calling (laptop-side, not on the wire)
