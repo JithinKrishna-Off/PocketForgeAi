@@ -11,3 +11,8 @@ captures/
 !artifacts/*.apk
 research/data/
 releases/windows/*.zip
+desktop/models/*.gguf
+desktop/tools/draft/*.exe
+desktop/tools/draft/*.dll
+desktop/publish/*.zip
+native/build-arm64/

@@ -80,9 +80,12 @@
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*"/>
                         <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="Auto"/>
                     </Grid.ColumnDefinitions>
                     <TextBlock x:Name="ModelInfoText" Text="Not connected." Foreground="{DynamicResource SubBrush}" TextTrimming="CharacterEllipsis"/>
-                    <Button x:Name="RefreshButton" Grid.Column="1" Content="Refresh status" Click="RefreshStatus_Click"
+                    <Button x:Name="ThemeButton" Grid.Column="1" Content="Theme: Auto" Click="Theme_Click"
+                            Style="{StaticResource ButtonStyle}" Margin="0,0,8,0" ToolTip="Cycle theme: Auto (follows Windows) -> Dark -> Light"/>
+                    <Button x:Name="RefreshButton" Grid.Column="2" Content="Refresh status" Click="RefreshStatus_Click"
                             Style="{StaticResource ButtonStyle}"/>
                 </Grid>
                 <Grid Margin="0,8,0,0">
@@ -107,6 +110,11 @@
                 <Expander.Header>
                     <StackPanel Orientation="Horizontal">
                         <CheckBox x:Name="AgentModeCheckBox" Content="Agent mode" Checked="AgentMode_Changed" Unchecked="AgentMode_Changed"/>
+                        <CheckBox x:Name="TurboCheckBox" Content="Turbo" Margin="16,0,0,0" VerticalAlignment="Center"
+                                  Checked="Turbo_Changed" Unchecked="Turbo_Changed"
+                                  ToolTip="Distributed speculative decoding: a local draft model proposes tokens, the phone verifies them. Falls back to normal mode when unavailable."/>
+                        <TextBlock x:Name="TurboStatusText" Text="Turbo: off" Foreground="{DynamicResource SubBrush}"
+                                   Margin="8,0,0,0" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
                         <TextBlock Text="   tool calls and results appear below" Foreground="{DynamicResource SubBrush}" VerticalAlignment="Center"/>
                     </StackPanel>
                 </Expander.Header>

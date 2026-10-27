@@ -13,6 +13,36 @@
 
 ---
 
+## What's New in v0.4.0
+
+> **Release:** `PocketForgeAI-v0.4.0-arm64-v8a.apk` (versionCode 4) + `PocketForgeDesktop-win-x64.zip`
+> **Note:** compiled and packaged builds; on-device behaviour pending manual hardware testing
+
+### Turbo mode (distributed speculative decoding)
+
+Optional PC-assisted generation. The desktop drafts candidate tokens with a
+local small model (Qwen3.5-0.8B, same qwen35 tokenizer family); the phone
+verifies them greedily against the loaded big model and stays the authority for
+the output. Rejected candidates are rolled back so the session stays exact.
+Desktop toggle, capability discovery, id-level tokenizer compatibility check
+(tokenization probe, not just vocab size), and automatic fallback to Normal on
+any unavailability. Greedy-only by design; real-device speed is the user's to
+measure.
+
+### Reliability and quality
+
+- Context-shift fix: long sessions no longer lose the system prompt; history is
+  dropped and re-primed instead of silently degrading.
+- KV cache defaults to q8_0 for K and V (large memory saving at near-lossless
+  quality for most models).
+- Turn queue on the phone server (depth 8, 30 s timeout, agent priority) with
+  honest 429 responses; the desktop retries queue-aware. Desktop reconnect bug
+  fixed (button no longer stays disabled after a failed connect).
+- In-app dark mode toggle (follows system by default).
+- Steering UI removed from the app; the shipped native build carries no steering
+  code (third_party tree is stock llama.cpp at the pinned revision).
+
+
 ## 🚀 What's New in v0.2.0
 
 > 📦 **Release:** `PocketForgeAI-v0.2.0-arm64-v8a.apk` (versionCode 2) — 30.3 MB, arm64-v8a only

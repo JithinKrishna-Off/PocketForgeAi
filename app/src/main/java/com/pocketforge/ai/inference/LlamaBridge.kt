@@ -90,14 +90,33 @@ object LlamaBridge {
     @JvmStatic
     external fun getRecentLogs(): Array<String>
 
-    /** JSON: device facts (HWCAP, per-core clocks, chosen CPU variant, mem) + current plan + steer status ({"facts":...,"currentPlan":...,"steer":{"active","appliedSpec"}}). */
+    /** JSON: device facts (HWCAP, per-core clocks, chosen CPU variant, mem) + current plan ({"facts":...,"currentPlan":...}). */
     @JvmStatic
     external fun pfPlansJson(): String
 
-    /** Applies a plan JSON (kv types, flash-attn, batch shape, threads, steer spec; bare plan or full wrapper). Returns error string, null on success. */
+    /** Applies a plan JSON (kv types, flash-attn, batch shape, threads; bare plan or full wrapper). Returns error string, null on success. */
     @JvmStatic
     external fun pfSetPlan(plan: String): String?
 
     @JvmStatic
     external fun shutdown()
+
+    // Turbo (distributed speculative decoding) primitives; null return = feature
+    // unavailable or model not loaded. All returns are JSON strings.
+
+    /** Processes this turn's prompts; returns {"ok":<bool>,"next_token":<int>,"committed":<int>,"max_new":<int>}. */
+    @JvmStatic
+    external fun specTurn(systemPrompt: String?, userPrompt: String, maxTokens: Int): String?
+
+    /** Verifies K drafted token ids in one batch; returns {"accepted":<int>,"text":<str>,"next_token":<int>,"committed":<int>,"done":<bool>,"finish_reason":<str|null>}. */
+    @JvmStatic
+    external fun specVerify(tokens: IntArray): String?
+
+    /** Ends the turbo turn; returns {"ok":<bool>,"prompt_tokens":<int>,"completion_tokens":<int>,"gen_ms":<long>}. */
+    @JvmStatic
+    external fun specFinish(text: String): String?
+
+    /** Reports turbo support; returns {"spec_verify":<bool>,"n_vocab":<int>,"greedy_only":<bool>}. */
+    @JvmStatic
+    external fun specCapabilities(): String?
 }

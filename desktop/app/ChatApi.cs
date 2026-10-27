@@ -56,6 +56,10 @@ public sealed class PhoneChatClient : IPhoneChatClient, IModelClient
     // phone-side session; consumed and cleared by the first chat request.
     public bool NextTurnResetsSession { get; set; }
 
+    // IModelClient turns advertise agent priority so the phone turn queue
+    // schedules them ahead of plain chat turns.
+    public bool AgentMode { get; set; }
+
     private static readonly JsonSerializerOptions JsonOpts = new() { PropertyNameCaseInsensitive = true };
 
     public PhoneChatClient(string host, int port, string? token = null)
@@ -158,6 +162,43 @@ public sealed class PhoneChatClient : IPhoneChatClient, IModelClient
         }
     }
 
+    // 429 from the phone turn queue: wait retry_after (bounded to 30 s) and
+    // retry once before surfacing the error to the caller.
+    private async Task<HttpResponseMessage> SendQueueAwareAsync(
+        Func<HttpRequestMessage> factory, HttpCompletionOption opt, CancellationToken ct)
+    {
+        var resp = await _http.SendAsync(factory(), opt, ct).ConfigureAwait(false);
+        if (resp.StatusCode != (HttpStatusCode)429)
+        {
+            return resp;
+        }
+        string body = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+        int retryAfter = ParseQueueRetryAfter(body);
+        if (retryAfter <= 0)
+        {
+            return resp; // caller turns the response into an exception
+        }
+        resp.Dispose();
+        await Task.Delay(TimeSpan.FromSeconds(retryAfter), ct).ConfigureAwait(false);
+        return await _http.SendAsync(factory(), opt, ct).ConfigureAwait(false);
+    }
+
+    private static int ParseQueueRetryAfter(string body)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(body);
+            if (doc.RootElement.TryGetProperty("retry_after", out var el) && el.TryGetInt32(out int s))
+            {
+                return Math.Clamp(s, 1, 30);
+            }
+        }
+        catch (JsonException)
+        {
+        }
+        return 2;
+    }
+
     public async IAsyncEnumerable<ChatDelta> StreamChatAsync(
         IReadOnlyList<ChatMessage> messages, ChatOptions options, [EnumeratorCancellation] CancellationToken ct)
     {
@@ -165,14 +206,17 @@ public sealed class PhoneChatClient : IPhoneChatClient, IModelClient
         var turn = BuildTurn(messages, reset);
         string body = BuildRequestBody(turn, stream: true, options, reset);
 
-        using var req = new HttpRequestMessage(HttpMethod.Post, BaseUrl + "/v1/chat/completions")
-        {
-            Content = new StringContent(body, Encoding.UTF8, "application/json")
-        };
-        AddAuth(req);
         // ResponseHeadersRead: hand the SSE stream back to the caller while it
         // is still open; the per-request lifetime is owned by this request.
-        using var resp = await _http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
+        using var resp = await SendQueueAwareAsync(() =>
+        {
+            var req = new HttpRequestMessage(HttpMethod.Post, BaseUrl + "/v1/chat/completions")
+            {
+                Content = new StringContent(body, Encoding.UTF8, "application/json")
+            };
+            AddAuth(req);
+            return req;
+        }, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
         if (resp.StatusCode != HttpStatusCode.OK)
         {
             throw await BuildApiErrorAsync(resp, ct).ConfigureAwait(false);
@@ -260,12 +304,15 @@ public sealed class PhoneChatClient : IPhoneChatClient, IModelClient
         var turn = BuildTurn(messages, reset);
         string body = BuildRequestBody(turn, stream: false, options, reset);
 
-        using var req = new HttpRequestMessage(HttpMethod.Post, BaseUrl + "/v1/chat/completions")
+        using var resp = await SendQueueAwareAsync(() =>
         {
-            Content = new StringContent(body, Encoding.UTF8, "application/json")
-        };
-        AddAuth(req);
-        using var resp = await _http.SendAsync(req, ct).ConfigureAwait(false);
+            var req = new HttpRequestMessage(HttpMethod.Post, BaseUrl + "/v1/chat/completions")
+            {
+                Content = new StringContent(body, Encoding.UTF8, "application/json")
+            };
+            AddAuth(req);
+            return req;
+        }, HttpCompletionOption.ResponseContentRead, ct).ConfigureAwait(false);
         if (resp.StatusCode != HttpStatusCode.OK)
         {
             throw await BuildApiErrorAsync(resp, ct).ConfigureAwait(false);
@@ -318,7 +365,7 @@ public sealed class PhoneChatClient : IPhoneChatClient, IModelClient
             : messages.Count > 0 ? messages[^1].Content : "";
         turn.Add(new ChatMessage("user", text));
 
-        await foreach (var d in StreamChatAsync(turn, new ChatOptions(), ct).ConfigureAwait(false))
+        await foreach (var d in StreamChatAsync(turn, new ChatOptions(Agent: AgentMode), ct).ConfigureAwait(false))
         {
             if (d.Content != null)
             {
@@ -412,14 +459,7 @@ public sealed class PhoneChatClient : IPhoneChatClient, IModelClient
             long nCtx = m.TryGetProperty("nCtx", out var cx) && cx.TryGetInt64(out var cv) ? cv : 0;
             int nThreads = m.TryGetProperty("nThreads", out var th) && th.TryGetInt32(out var tv) ? tv : 0;
             string? backend = GetString(m, "backend");
-            bool steerActive = false;
-            string? steerSpec = null;
-            if (m.TryGetProperty("steering", out var steer) && steer.ValueKind == JsonValueKind.Object)
-            {
-                steerActive = steer.TryGetProperty("active", out var sa) && sa.ValueKind == JsonValueKind.True;
-                steerSpec = GetString(steer, "spec");
-            }
-            model = new ModelInfo(loaded, name, desc, size, nCtx, nThreads, backend, steerActive, steerSpec);
+            model = new ModelInfo(loaded, name, desc, size, nCtx, nThreads, backend);
         }
         return new StatusInfo(server, state, busy, model);
     }
@@ -427,6 +467,155 @@ public sealed class PhoneChatClient : IPhoneChatClient, IModelClient
     private static string? GetString(JsonElement parent, string name)
     {
         return parent.TryGetProperty(name, out var el) && el.ValueKind == JsonValueKind.String ? el.GetString() : null;
+    }
+
+    // ---- SpecApi: distributed speculative decoding (turbo mode) ------------
+    // Additive v1 extension; auth and session ownership are unchanged.
+
+    public async Task<SpecCapabilities> GetSpecCapabilitiesAsync(CancellationToken ct)
+    {
+        using var req = new HttpRequestMessage(HttpMethod.Get, BaseUrl + "/v1/spec/capabilities");
+        AddAuth(req);
+        using var resp = await _http.SendAsync(req, ct).ConfigureAwait(false);
+        if (resp.StatusCode != HttpStatusCode.OK)
+        {
+            throw await BuildApiErrorAsync(resp, ct).ConfigureAwait(false);
+        }
+        var json = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+        using var doc = JsonDocument.Parse(json);
+        var root = doc.RootElement;
+        return new SpecCapabilities(
+            SpecVerify: GetBool(root, "spec_verify"),
+            NVocab: GetInt(root, "n_vocab"),
+            GreedyOnly: GetBool(root, "greedy_only"),
+            Probe: GetString(root, "probe") ?? "");
+    }
+
+    public async Task<SpecTurn> SpecTurnAsync(
+        string user, string? system, int maxTokens, bool resetSession, CancellationToken ct)
+    {
+        string body = BuildSpecTurnBody(user, system, maxTokens, resetSession);
+        using var resp = await SendQueueAwareAsync(() =>
+        {
+            var req = new HttpRequestMessage(HttpMethod.Post, BaseUrl + "/v1/spec/turn")
+            {
+                Content = new StringContent(body, Encoding.UTF8, "application/json")
+            };
+            AddAuth(req);
+            return req;
+        }, HttpCompletionOption.ResponseContentRead, ct).ConfigureAwait(false);
+        if (resp.StatusCode != HttpStatusCode.OK)
+        {
+            throw await BuildApiErrorAsync(resp, ct).ConfigureAwait(false);
+        }
+        var json = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+        using var doc = JsonDocument.Parse(json);
+        var root = doc.RootElement;
+        var turn = new SpecTurn(
+            Ok: GetBool(root, "ok"),
+            NextToken: GetInt(root, "next_token"),
+            Committed: GetInt(root, "committed"),
+            MaxNew: GetInt(root, "max_new"));
+        if (!turn.Ok)
+        {
+            throw new PhoneApiException("spec turn reported ok=false", (int)resp.StatusCode);
+        }
+        return turn;
+    }
+
+    public async Task<SpecVerify> SpecVerifyAsync(int[] tokens, CancellationToken ct)
+    {
+        using var ms = new MemoryStream();
+        using (var w = new Utf8JsonWriter(ms))
+        {
+            w.WriteStartObject();
+            w.WriteStartArray("tokens");
+            foreach (int t in tokens)
+            {
+                w.WriteNumberValue(t);
+            }
+            w.WriteEndArray();
+            w.WriteEndObject();
+        }
+        string body = Encoding.UTF8.GetString(ms.ToArray());
+        using var req = new HttpRequestMessage(HttpMethod.Post, BaseUrl + "/v1/spec/verify")
+        {
+            Content = new StringContent(body, Encoding.UTF8, "application/json")
+        };
+        AddAuth(req);
+        using var resp = await _http.SendAsync(req, ct).ConfigureAwait(false);
+        if (resp.StatusCode != HttpStatusCode.OK)
+        {
+            throw await BuildApiErrorAsync(resp, ct).ConfigureAwait(false);
+        }
+        var json = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+        using var doc = JsonDocument.Parse(json);
+        var root = doc.RootElement;
+        return new SpecVerify(
+            Accepted: GetInt(root, "accepted"),
+            Text: GetString(root, "text") ?? "",
+            NextToken: GetInt(root, "next_token"),
+            Committed: GetInt(root, "committed"),
+            Done: GetBool(root, "done"),
+            FinishReason: GetString(root, "finish_reason") ?? "");
+    }
+
+    // End-of-turn bookkeeping: the phone records usage stats; the response body
+    // carries nothing the caller needs.
+    public async Task SpecFinishAsync(string text, CancellationToken ct)
+    {
+        using var ms = new MemoryStream();
+        using (var w = new Utf8JsonWriter(ms))
+        {
+            w.WriteStartObject();
+            w.WriteString("text", text);
+            w.WriteEndObject();
+        }
+        using var req = new HttpRequestMessage(HttpMethod.Post, BaseUrl + "/v1/spec/finish")
+        {
+            Content = new StringContent(Encoding.UTF8.GetString(ms.ToArray()), Encoding.UTF8, "application/json")
+        };
+        AddAuth(req);
+        using var resp = await _http.SendAsync(req, ct).ConfigureAwait(false);
+        if ((int)resp.StatusCode >= 300)
+        {
+            throw await BuildApiErrorAsync(resp, ct).ConfigureAwait(false);
+        }
+    }
+
+    private static string BuildSpecTurnBody(string user, string? system, int maxTokens, bool resetSession)
+    {
+        using var ms = new MemoryStream();
+        using (var w = new Utf8JsonWriter(ms))
+        {
+            w.WriteStartObject();
+            w.WriteString("user", user);
+            if (system != null)
+            {
+                w.WriteString("system", system);
+            }
+            else
+            {
+                w.WriteNull("system");
+            }
+            w.WriteNumber("max_tokens", maxTokens);
+            if (resetSession)
+            {
+                w.WriteBoolean("reset_session", true);
+            }
+            w.WriteEndObject();
+        }
+        return Encoding.UTF8.GetString(ms.ToArray());
+    }
+
+    private static bool GetBool(JsonElement parent, string name)
+    {
+        return parent.TryGetProperty(name, out var el) && el.ValueKind == JsonValueKind.True;
+    }
+
+    private static int GetInt(JsonElement parent, string name)
+    {
+        return parent.TryGetProperty(name, out var el) && el.TryGetInt32(out int v) ? v : 0;
     }
 
     private static async Task<PhoneApiException> BuildApiErrorAsync(HttpResponseMessage resp, CancellationToken ct)

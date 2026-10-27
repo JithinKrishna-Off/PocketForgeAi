@@ -66,7 +66,8 @@ Request:
 ```json
 {"messages":[{"role":"system","content":"..."},
              {"role":"user","content":"..."}],
- "stream":true,"max_tokens":2048,"stop":[],"reset_session":false,"seed":0}
+ "stream":true,"max_tokens":2048,"stop":[],"reset_session":false,
+ "agent":false,"seed":0}
 ```
 
 Session semantics (important): the phone holds the conversation state (KV
@@ -76,6 +77,8 @@ NOT be re-sent on follow-up requests (they are already in the phone session).
 `reset_session:true` clears the phone-side session first (fresh conversation).
 A `system` message in the first request becomes/updates the system prompt
 (applied once per model load); later system messages are rejected with 400.
+`agent:true` marks tool-loop turns; they jump ahead of plain chat turns in the
+phone's turn queue.
 
 Response, non-streaming (`stream:false`):
 
@@ -107,18 +110,56 @@ data: [DONE]
 ### Errors
 
 `{"error":{"message":"...","code":N}}` with status codes: 400 malformed,
-401 auth, 404 unknown path, 409 busy (a generation is already running - retry
-later; the phone does NOT queue concurrent generations), 413 body too large,
-429 pairing rate limit, 503 model not loaded / server shutting down, 500
-internal. Errors are JSON even mid-stream (before first delta; after deltas
-the stream errors as an `error` event then closes).
+401 auth, 404 unknown path, 409 busy (a phone-UI generation is already running,
+or a server turn raced one), 413 body too large, 503 model not loaded / server
+shutting down, 500 internal. Errors are JSON even mid-stream (before first
+delta; after deltas the stream errors as an `error` event then closes).
+
+429 is a turn-queue answer: when a generation is running, additional server
+turns wait in a bounded queue (depth 8, 30 s timeout) instead of failing; if
+the queue is full or the wait times out the request is answered with
+
+```json
+{"error":{"message":"turn queue full or timed out","code":429},
+ "queue_depth":N,"retry_after":2}
+```
+
+429 is also the pairing rate limit (6 failed pair attempts / minute).
 
 ### Concurrency
 
 - One generation at a time across the whole app (in-app chat and server share
-  the engine). `409` when busy.
+  the engine). A phone-UI generation rejects server turns with `409`.
+  Server-initiated turns queue (see 429 above).
 - Request bodies are read fully before generation starts; generation runs on
   the engine's own dispatcher; network I/O never runs on the UI thread.
+
+## Turbo (speculative decoding, /v1/spec/*)
+
+Desktop-orchestrated, opt-in. The PC drafts K candidate tokens per round with a
+local small model; the phone verifies them greedily against the big model and
+stays the authority for the final sequence. Sampling params are ignored while a
+turbo turn runs (greedy-only by design).
+
+- `GET /v1/spec/capabilities` -> `{"spec_verify":true,"n_vocab":N,"greedy_only":true,
+  "probe":"id,id,..."}` | `503` unsupported or model not loaded. `probe` is the
+  tokenization (target tokenizer) of a fixed probe string; the desktop tokenizes
+  the same string with the draft model and compares ids. Equal ids = compatible
+  tokenizer; unequal or missing = turbo falls back to normal mode.
+- `POST /v1/spec/turn` `{"user","system"?,max_tokens,reset_session?}` ->
+  `{"ok":true,"next_token","committed":0,"max_new"}` | `400` malformed | `409`
+  busy or turbo already active | `429` queue (see above) | `503` failed. Holds
+  one queue permit until finish, cancel, or watchdog release (120 s idle).
+- `POST /v1/spec/verify` `{"tokens":[...]}` -> `{"accepted","text","next_token",
+  "committed","done","finish_reason"}`. `text` holds the pieces accepted this
+  round (including the pending greedy token). `next_token` is the bonus target
+  pick, or `-1` when done. Rejected candidates are rolled back (KV + hybrid
+  state) so the session stays exact.
+- `POST /v1/spec/finish` `{"text"}` -> `{"ok","prompt_tokens","completion_tokens",
+  "gen_ms"}`; always releases the queue permit.
+- `/v1/cancel` during a turbo turn ends it with `finish_reason:"cancelled"`.
+- The phone's normal `/v1/chat/completions` behavior is unchanged; turbo turns
+  and normal turns never run at the same time (409 otherwise).
 
 ## Lifecycle
 

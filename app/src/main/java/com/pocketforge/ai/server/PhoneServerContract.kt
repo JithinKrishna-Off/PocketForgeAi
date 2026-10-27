@@ -21,6 +21,13 @@ internal object PhoneServerContract {
         .put("error", JSONObject().put("message", message).put("code", code))
         .toString()
 
+    /** 429 body for a timed-out or full turn queue (docs/pocketforge-api-v1.md). */
+    fun queueBusyJson(message: String, queueDepth: Int, retryAfterSec: Int): String = JSONObject()
+        .put("error", JSONObject().put("message", message).put("code", 429))
+        .put("queue_depth", queueDepth)
+        .put("retry_after", retryAfterSec)
+        .toString()
+
     fun pairTokenJson(token: String): String = JSONObject().put("token", token).toString()
 
     fun statusJson(
@@ -30,8 +37,6 @@ internal object PhoneServerContract {
         busy: Boolean,
         runtime: ModelRuntimeInfo?,
         modelName: String?,
-        steerActive: Boolean,
-        steerSpec: String,
     ): String {
         val model = JSONObject()
             .put("loaded", runtime != null)
@@ -41,7 +46,6 @@ internal object PhoneServerContract {
             .put("nCtx", runtime?.nCtx ?: 0)
             .put("nThreads", runtime?.nThreads ?: 0)
             .put("backend", runtime?.backendDevices?.firstOrNull()?.backend?.lowercase() ?: "cpu")
-            .put("steering", JSONObject().put("active", steerActive).put("spec", steerSpec))
         return JSONObject()
             .put("api", "v1")
             .put("server", true)

@@ -32,8 +32,6 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.pocketforge.ai.PocketForgeApp
 import com.pocketforge.ai.data.hub.HfGgufFile
-import com.pocketforge.ai.data.steering.SteeringAssessment
-import com.pocketforge.ai.data.steering.SteeringTechStatus
 import com.pocketforge.ai.download.DownloadInfo
 import com.pocketforge.ai.download.DownloadPhase
 import java.util.Locale
@@ -172,17 +170,9 @@ private fun HubCard(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
-                hub.steerStatus?.let { steering ->
-                    Text(
-                        steerLine(steering),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = steerColor(steering),
-                        modifier = Modifier.padding(top = 2.dp),
-                    )
-                }
             } else {
                 Text(
-                    "Expand the file list to load size, architecture and steering compatibility.",
+                    "Expand the file list to load size and architecture details.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(top = 4.dp),
@@ -384,19 +374,6 @@ private fun HubFileRow(
             }
         }
     }
-}
-
-private fun steerLine(a: SteeringAssessment): String = when (a.techStatus) {
-    SteeringTechStatus.SUPPORTED -> "Steering: supported (dims verified after download, effect unverified)"
-    SteeringTechStatus.UNSUPPORTED -> "Steering: unsupported - " + (a.reasons.firstOrNull() ?: "no reason given")
-    SteeringTechStatus.UNKNOWN -> "Steering: unknown - " + (a.reasons.firstOrNull() ?: "no reason given")
-}
-
-@Composable
-private fun steerColor(a: SteeringAssessment) = when (a.techStatus) {
-    SteeringTechStatus.SUPPORTED -> MaterialTheme.colorScheme.primary
-    SteeringTechStatus.UNSUPPORTED -> MaterialTheme.colorScheme.error
-    SteeringTechStatus.UNKNOWN -> MaterialTheme.colorScheme.onSurfaceVariant
 }
 
 private fun shortSha(sha: String?): String =

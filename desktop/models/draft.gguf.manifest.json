@@ -1,0 +1,1 @@
+{"file":"draft.gguf","n_vocab":248320,"arch":"qwen35","name":"Qwen3.5-0.8B","size_label":"773M","quant":"Q8_0","tokenizer_pre":"qwen35","context_length":262144,"eos_token_id":248046,"downloaded_from":"local (pre-downloaded; identity read from GGUF metadata: general.name=Qwen3.5-0.8B, unsloth GGUF distribution)","bytes":833592096}

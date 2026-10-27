@@ -18,6 +18,15 @@ if ($LASTEXITCODE -ne 0) { throw "McpTools publish failed" }
 Copy-Item (Join-Path $pubMcp "McpTools.exe") $pubApp -Force
 Copy-Item (Join-Path $root "McpTools\tools.config.json") $pubApp -Force
 
+# Turbo draft runner + manifest; the large draft.gguf itself is not bundled
+$draft = Join-Path $root "tools\draft"
+if (Test-Path $draft) {
+    New-Item -ItemType Directory -Force -Path (Join-Path $pubApp "tools\draft") | Out-Null
+    Copy-Item (Join-Path $draft "*") (Join-Path $pubApp "tools\draft") -Force
+}
+New-Item -ItemType Directory -Force -Path (Join-Path $pubApp "models") | Out-Null
+Copy-Item (Join-Path $root "models\draft.gguf.manifest.json") (Join-Path $pubApp "models") -Force -ErrorAction SilentlyContinue
+
 $zip = Join-Path $root "PocketForgeDesktop-win-x64.zip"
 if (Test-Path $zip) { Remove-Item $zip -Force }
 Compress-Archive -Path (Join-Path $pubApp "*") -DestinationPath $zip
