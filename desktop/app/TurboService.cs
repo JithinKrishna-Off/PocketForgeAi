@@ -126,6 +126,11 @@ public sealed class TurboService
                     new("assistant", generated.ToString()),
                 };
                 var (ids, _) = await _draft.DraftCandidatesAsync(draftMessages, k, ct);
+                if (ids.Length == 0)
+                {
+                    throw TurboFallbackException.Error(
+                        "draft produced no candidate tokens (empty generation)", turnStarted);
+                }
 
                 SpecVerify v = await phone.SpecVerifyAsync(ids, ct);
                 if (v.Text.Length > 0)

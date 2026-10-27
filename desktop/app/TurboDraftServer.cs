@@ -36,7 +36,7 @@ public sealed class TurboDraftServer : IDisposable
         {
             FileName = exePath,
             Arguments = "-m \"" + modelPath.Replace("\"", "\\\"") + "\" --port " + port +
-                        " --host 127.0.0.1 -c 4096 --no-webui",
+                        " --host 127.0.0.1 -c 4096 --no-webui --reasoning-format none",
             WorkingDirectory = Path.GetDirectoryName(exePath) ?? ".",
             UseShellExecute = false,
             CreateNoWindow = true,
@@ -198,6 +198,10 @@ public sealed class TurboDraftServer : IDisposable
             {
                 ids.Add(v);
             }
+            else if (el.ValueKind == JsonValueKind.String && int.TryParse(el.GetString(), out int sv))
+            {
+                ids.Add(sv); // tolerate id arrays that arrive as strings
+            }
         }
         return ids.ToArray();
     }
@@ -238,7 +242,7 @@ public sealed class TurboDraftServer : IDisposable
         try
         {
             string body = JsonSerializer.Serialize(new { content, add_special = false });
-            using var req = new HttpRequestMessage(HttpMethod.Post, "/v1/tokenize")
+            using var req = new HttpRequestMessage(HttpMethod.Post, "/tokenize")
             {
                 Content = new StringContent(body, Encoding.UTF8, "application/json"),
             };
